@@ -1,96 +1,97 @@
-# Winflux (WFLX) — blockchain própria
+# Winflux (WFLX) — Independent Blockchain
 
-> Nome oficial: **Winflux (WFLX)**. Histórico: Nexora/NXR (já existia) → Kelvora/KVRA → Winflux/WFLX.
-> A disponibilidade de marca e de símbolo **ainda não está confirmada**: ver `docs/naming.md`.
-> **Software de testes. Não use com dinheiro real** antes de auditoria criptográfica,
-> testes adversariais e revisão independente.
+> Official name: **Winflux (WFLX)**. Naming history: Nexora/NXR (previously used) → Kelvora/KVRA → Winflux/WFLX.
+> Trademark and ticker availability **have not yet been confirmed**: see `docs/naming.md`.
+> **Experimental software. Do not use with real funds** before cryptographic audits,
+> adversarial testing, and independent review.
 
-| Parâmetro | Valor |
+| Parameter | Value |
 |---|---|
-| Oferta máxima | 100.000.000 WFLX (`10^16` unidades) |
-| Casas decimais | 8 (menor unidade `0,00000001 WFLX`) |
-| Emissão | limitada: gênese + recompensa por bloco com halving, sempre sob o teto |
-| Criação adicional | proibida (validada por todo nó: coinbase ≤ recompensa + taxas; oferta ≤ teto) |
-| Hash / assinatura | SHA-256 / Ed25519 |
-| Modelo | UTXO, valores inteiros |
-| Consenso | **PoW aberto** (sem autoridades, lançamento justo, zero pré-mineração) para a rede pública; PoA só na devnet local |
+| Maximum supply | 100,000,000 WFLX (`10^16` units) |
+| Decimal places | 8 (smallest unit: `0.00000001 WFLX`) |
+| Issuance | Limited: genesis + block rewards with halving, always subject to the supply cap |
+| Additional issuance | Prohibited (validated by every node: coinbase ≤ reward + fees; supply ≤ cap) |
+| Hashing / signatures | SHA-256 / Ed25519 |
+| Model | UTXO, integer-denominated values |
+| Consensus | **Open PoW** (no authorities, fair launch, zero premine) for the public network; PoA only on the local devnet |
 
 ## Status
 
-| Etapa | Estado |
+| Stage | Status |
 |---|---|
-| 1 Blockchain básica (gênese, blocos, encadeamento, persistência SQLite) | ✅ testada |
-| 2 Criptografia e carteiras (Ed25519, endereços `wflx1…`, keystore cifrado) | ✅ testada |
-| 3 Sistema monetário (UTXO, taxas, teto de oferta, anti gasto duplo/replay) | ✅ testada |
-| 0 Consolidação (achados da auditoria: taxa por byte, limite de bloco, carteira HD, chave de recuperação, `chain_id` único) | ✅ testada (`docs/audit-fase0.md`) |
-| 1a Tipos de transação e cofres offline na camada de consenso (3b-1): `vault_open`, `voucher_claim`, `vault_refund`, voucher binário, Ed25519/P-256, coinbase com hash anterior | ✅ testada (239 testes, 13 mutações) |
-| A1 `state_root` no cabeçalho, checkpoints e provas de cofre verificáveis offline | ✅ testada |
-| Exposição determinística do colateral (R1-R9) e correção do bug de reapresentação | ✅ testada |
-| A2 Notas transferíveis: chave por vaga, formato binário, verificador offline, simulador de hardware e atestação (405 testes, 33 mutações) | ✅ testada |
-| A3 `note_claim` (liquidação de notas on-chain, conflito/compensação R1-R9, undo, fuzz e mutações; 497 testes) | ✅ testada (`docs/protocol.md`) |
-| A4 reconciliação (API de cofres, diário do dono, relatório diário × cadeia, CLI `reconcile`/`vault-refund`; sem fechamento antecipado, ver `docs/protocol.md`) | ✅ testada (533 testes) |
-| 1b Identificador de esquema e endereço v2, chaves de vaga pós-quânticas (LMS), formato binário de transação | ⏳ |
-| Carteira Android v0.1 (online: HD, enviar/receber; núcleo testado na JVM contra o Python; UI não compilada) | 🟡 `android-wallet/` |
-| Android offline (diagnóstico de hardware, NFC/BLE), PWA | ⏳ |
-| 4 Rede P2P (handshake, mempool, propagação, sincronização, banimento), API HTTP, nó e carteira CLI | ✅ testada (3 nós + processos reais) |
-| 4b PWA (celular/PC) | ⏳ depois da API |
-| 5 PoW com ajuste de dificuldade, maior-trabalho, reorganizações atômicas, maturidade de coinbase, gênese justo (`netgen`) | ✅ testada (`docs/decentralization.md`) |
-| 6+ Android nativo, testes entre redes, documentação pública | ⏳ |
+| 1 Basic blockchain (genesis, blocks, chaining, SQLite persistence) | ✅ tested |
+| 2 Cryptography and wallets (Ed25519, `wflx1…` addresses, encrypted keystore) | ✅ tested |
+| 3 Monetary system (UTXO, fees, supply cap, double-spend/replay protection) | ✅ tested |
+| 0 Consolidation (audit findings: fee per byte, block size limit, HD wallet, recovery key, unique `chain_id`) | ✅ tested (`docs/audit-fase0.md`) |
+| 1a Transaction types and offline vaults at the consensus layer (3b-1): `vault_open`, `voucher_claim`, `vault_refund`, binary voucher, Ed25519/P-256, coinbase with previous hash | ✅ tested (239 tests, 13 mutations) |
+| A1 `state_root` in the header, checkpoints, and offline-verifiable vault proofs | ✅ tested |
+| Deterministic collateral exposure (R1–R9) and fix for the replay/submission bug | ✅ tested |
+| A2 Transferable notes: per-slot key, binary format, offline verifier, hardware simulator and attestation (405 tests, 33 mutations) | ✅ tested |
+| A3 `note_claim` (on-chain note settlement, conflict/compensation R1–R9, undo, fuzzing and mutations; 497 tests) | ✅ tested (`docs/protocol.md`) |
+| A4 Reconciliation (vault API, owner's journal, daily report × chain, `reconcile`/`vault-refund` CLI; no early closure, see `docs/protocol.md`) | ✅ tested (533 tests) |
+| 1b Schema identifier and v2 address, post-quantum slot keys (LMS), binary transaction format | ⏳ |
+| Android wallet v0.1 (online: HD, send/receive; JVM core tested against Python; UI not compiled) | 🟡 `android-wallet/` |
+| Android offline (hardware diagnostics, NFC/BLE), PWA | ⏳ |
+| 4 P2P network (handshake, mempool, propagation, synchronization, banning), HTTP API, node and CLI wallet | ✅ tested (3 nodes + real processes) |
+| 4b PWA (mobile/desktop) | ⏳ after the API |
+| 5 PoW with difficulty adjustment, most-work chain selection, atomic reorganizations, coinbase maturity, fair genesis (`netgen`) | ✅ tested (`docs/decentralization.md`) |
+| 6+ Native Android, cross-network testing, public documentation | ⏳ |
 
-## Rodar uma rede PoW (sem permissão de ninguém)
+## Run a PoW network (without anyone's permission)
 
 ```bash
-python -m winflux.tools.netgen --name testnet --out genesis.json        # gênese justo: sem pré-mineração, sem autoridades
-python -m winflux.cli --wallet w.json create                            # carteira + chave de recuperação
-python -m winflux.node.main --genesis genesis.json --listen 0.0.0.0:8333 --mine <endereço>   # nó + minerador
+python -m winflux.tools.netgen --name testnet --out genesis.json        # fair genesis: no premine, no authorities
+python -m winflux.cli --wallet w.json create                            # wallet + recovery key
+python -m winflux.node.main --genesis genesis.json --listen 0.0.0.0:8333 --mine <address>   # node + miner
 python -m winflux.node.main --genesis genesis.json --datadir n2 --listen 0.0.0.0:8334 --api 127.0.0.1:8081 --seed IP:8333
-python -m winflux.cli --node http://127.0.0.1:8081 --wallet w.json balance | send <endereço> <valor>
+python -m winflux.cli --node http://127.0.0.1:8081 --wallet w.json balance | send <address> <amount>
 ```
-Leia `docs/decentralization.md` (princípios, o que o código garante e o que **não** garante, decisões pendentes).
 
-## Uso
+Read `docs/decentralization.md` (principles, what the code guarantees and **does not** guarantee, and pending decisions).
+
+## Usage
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 
-pytest                                   # suíte completa
-PYTHONPATH=. python scripts/demo_local.py   # gênese -> transferência -> bloco -> confirmações
-PYTHONPATH=. python scripts/demo_offline_vault.py   # cofre offline, gasto duplo, compensação e devolução
-PYTHONPATH=. python scripts/demo_chained_notes.py    # Alice -> Bob -> Carlos -> Dave offline (hardware SIMULADO)
-PYTHONPATH=. python scripts/demo_note_claim.py       # liquidação on-chain (note_claim), gasto duplo e colateral
-python -m winflux.tools.devnet init --dir devnet   # cria genesis.json + chaves cifradas (5.000.000 WFLX no gênese)
-# a senha vem de WINFLUX_DEVNET_PASSWORD ou de um prompt (nunca da linha de comando)
+pytest                                   # full test suite
+PYTHONPATH=. python scripts/demo_local.py   # genesis -> transfer -> block -> confirmations
+PYTHONPATH=. python scripts/demo_offline_vault.py   # offline vault, double spending, compensation and refund
+PYTHONPATH=. python scripts/demo_chained_notes.py    # Alice -> Bob -> Carlos -> Dave offline (SIMULATED hardware)
+PYTHONPATH=. python scripts/demo_note_claim.py       # on-chain settlement (note_claim), double spending and collateral
+python -m winflux.tools.devnet init --dir devnet   # creates genesis.json + encrypted keys (5,000,000 WFLX at genesis)
+# the password is read from WINFLUX_DEVNET_PASSWORD or requested through a prompt (never from the command line)
 ```
 
-`devnet init` cria `genesis.json`, `producer.key.json` (autoridade PoA) e `faucet.key.json`
-(recebe os 5.000.000 WFLX iniciais). O `chain_id` é derivado do gênese. A senha padrão (`devnet-only-password`) só
-é usada quando não há variável nem terminal interativo; serve apenas para testes locais.
+`devnet init` creates `genesis.json`, `producer.key.json` (PoA authority), and `faucet.key.json`
+(which receives the initial 5,000,000 WFLX). The `chain_id` is derived from the genesis block. The default password (`devnet-only-password`) is
+used only when neither an environment variable nor an interactive terminal is available; it is intended for local testing only.
 
-Carteira recomendada: `winflux.wallet.hd.HDWallet` (troco em endereço novo, chave de recuperação `wflxk1-…`).
+Recommended wallet: `winflux.wallet.hd.HDWallet` (change sent to a new address, recovery key `wflxk1-…`).
 
-## Estrutura
+## Structure
 
 ```text
 winflux/
-├── crypto/      hashing.py address.py keys.py        SHA-256, endereços, Ed25519, keystore
+├── crypto/      hashing.py address.py keys.py        SHA-256, addresses, Ed25519, keystore
 ├── blockchain/  transaction.py block.py params.py genesis.py utxo.py vaults.py ledger.py validation.py chain.py
 ├── offline/     voucher.py proofs.py note.py verifier.py attestation.py hardware_sim.py
-│                                                      voucher, provas de cofre, notas encadeadas, verificador, hardware SIMULADO
-├── blockchain/  exposure.py state_root.py             limites de exposição (R1-R9), raiz Merkle de cofres
-├── consensus/   interface.py poa.py pow.py            PoA (devnet) e PoW (rede pública)
-├── node/        storage.py mempool.py node.py main.py nó completo (cadeia+mempool+P2P+minerador)
+│                                                      vouchers, vault proofs, chained notes, verifier, SIMULATED hardware
+├── blockchain/  exposure.py state_root.py             exposure limits (R1–R9), Merkle root for vaults
+├── consensus/   interface.py poa.py pow.py            PoA (devnet) and PoW (public network)
+├── node/        storage.py mempool.py node.py main.py complete node (chain+mempool+P2P+miner)
 ├── wallet/      wallet.py hd.py transaction_builder.py vault_builder.py
-├── network/p2p.py  api/server.py  cli.py              P2P, API HTTP, carteira de linha de comando
-├── tools/       devnet.py netgen.py localnet.py       devnet PoA local; gênese PoW justo; testnet local multiprocesso
-├── logs.py      network/limits.py                     logging com redação de segredos; token bucket (P2P/API)
-web-wallet/ (PWA)   android-wallet/ (nativo, futuro)   tests/   docs/   scripts/
+├── network/p2p.py  api/server.py  cli.py              P2P, HTTP API, command-line wallet
+├── tools/       devnet.py netgen.py localnet.py       local PoA devnet; fair PoW genesis; multi-process local testnet
+├── logs.py      network/limits.py                     secret-redacting logging; token bucket (P2P/API)
+web-wallet/ (PWA)   android-wallet/ (native, future)   tests/   docs/   scripts/
 ```
 
-Mudança em relação ao briefing: as regras de validação de transações ficam em
-`blockchain/validation.py` (e não em `node/validator.py`) para evitar dependência circular
-entre cadeia e nó e para o app Android/ferramentas reutilizarem o mesmo código de regras.
+Change from the original brief: transaction validation rules are located in
+`blockchain/validation.py` (rather than `node/validator.py`) to avoid a circular dependency
+between the chain and node, and to allow the Android app and tools to reuse the same validation rules.
 
-Documentação: `docs/offline-chained-payments.md` (**arquitetura aprovada dos pagamentos offline encadeados**),
-`docs/security-assumptions.md` (hipóteses de segurança), `docs/running-a-node.md` (operar um nó), `docs/testnet.md` (testnet, testnet local e smoke test), `docs/protocol.md` (regras das Etapas 1–3), `docs/offline-payments.md` (cofres e vouchers:
-especificação e modelo de ameaças — **requisito central**) e `docs/architecture.md` (riscos e decisões).
+Documentation: `docs/offline-chained-payments.md` (**approved architecture for chained offline payments**),
+`docs/security-assumptions.md` (security assumptions), `docs/running-a-node.md` (operating a node), `docs/testnet.md` (testnet, local testnet and smoke test), `docs/protocol.md` (Stages 1–3 rules), `docs/offline-payments.md` (vaults and vouchers:
+specification and threat model — **core requirement**), and `docs/architecture.md` (risks and decisions).

@@ -1,6 +1,6 @@
 # Winflux (WFLX) — Independent Blockchain
 
-> Official name: **Winflux (WFLX)**. Naming history: Nexora/NXR (previously used) → Kelvora/KVRA → Winflux/WFLX.
+> Official name: **Winflux (WFLX)**. 
 > Trademark and ticker availability **have not yet been confirmed**: see `docs/naming.md`.
 > **Experimental software. Do not use with real funds** before cryptographic audits,
 > adversarial testing, and independent review.

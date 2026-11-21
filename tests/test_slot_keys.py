@@ -1,4 +1,4 @@
-"""A2: chave própria por vaga (base das notas transferíveis) — consenso, prova e adulteração."""
+"""A2: per-slot key (basis of transferable notes) — consensus, proof and tampering."""
 import copy
 from dataclasses import replace
 
@@ -82,13 +82,13 @@ def test_slot_keys_change_the_state_root(keys, dev):
 
 
 @pytest.mark.parametrize("make,msg", [
-    (lambda k: k[:1], "uma chave por vaga"),                              # contagem errada
-    (lambda k: k + k[:1], "uma chave por vaga"),
-    (lambda k: [k[0], k[0]], "repetidas"),
-    (lambda k: [k[0], "zz" * (len(k[0]) // 2)], "chave de vaga inválida"),
-    (lambda k: [k[0], k[1][:-2]], "chave de vaga inválida"),               # comprimento errado
-    (lambda k: [k[0], 7], "chave de vaga inválida"),
-    (lambda k: "texto", "uma chave por vaga"),
+    (lambda k: k[:1], "one key per slot"),                              # wrong count
+    (lambda k: k + k[:1], "one key per slot"),
+    (lambda k: [k[0], k[0]], "repeated"),
+    (lambda k: [k[0], "zz" * (len(k[0]) // 2)], "invalid slot key"),
+    (lambda k: [k[0], k[1][:-2]], "invalid slot key"),               # wrong length
+    (lambda k: [k[0], 7], "invalid slot key"),
+    (lambda k: "text", "one key per slot"),
 ])
 def test_slot_key_validation(keys, dev, make, msg):
     chain = vchain(keys)
@@ -102,7 +102,7 @@ def test_p256_slot_key_must_be_compressed(keys):
     chain = vchain(keys)
     k = slot_key("p256", 70)
     bad = ["04" + k[2:], k]
-    with pytest.raises(ValidationError, match="comprimida"):
+    with pytest.raises(ValidationError, match="compressed"):
         chain.check_transaction(forge_open(chain, keys, dev, {"slot_keys": bad}))
 
 
@@ -111,7 +111,7 @@ def test_slot_keys_are_covered_by_the_proof_of_possession(keys, dev):
     sk = [slot_key(dev.key_type, 80), slot_key(dev.key_type, 81)]
     tx = forge_open(chain, keys, dev, {"slot_keys": sk})
     swapped = replace(tx, payload={**tx.payload, "slot_keys": [sk[0], slot_key(dev.key_type, 99)]})
-    with pytest.raises(ValidationError):                                   # pop/assinaturas deixam de bater
+    with pytest.raises(ValidationError):                                   # pop/signatures no longer match
         chain.check_transaction(swapped)
 
 
@@ -129,13 +129,13 @@ def test_tampering_the_slot_key_in_a_proof_is_rejected(keys, dev):
         P.verify_vault_proof(bad2, chain.params, POA)
 
 
-# ------------------------------------------------------------------ robustez: só ValidationError no consenso
+# ------------------------------------------------------------------ robustness: only ValidationError in consensus
 def _junk():
     return [None, -1, 0, 2**70, "", "x", [], {}, True, False, 1.5, [1], {"a": 1}, "00" * 32, "g" * 64, [[]], [{}]]
 
 
 def test_fuzz_vault_open_payload_only_validation_errors(keys, dev):
-    """Regressão: `key_type` não hasheável levantava TypeError dentro da validação de consenso."""
+    """Regression: an unhashable `key_type` raised TypeError inside consensus validation."""
     import random
     rnd = random.Random(21)
     chain = vchain(keys)

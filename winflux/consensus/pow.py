@@ -1,17 +1,17 @@
-"""Proof of Work: qualquer pessoa pode minerar; ninguém tem autoridade especial.
+"""Proof of Work: anyone can mine; nobody has special authority.
 
-Regras
-------
-* O bloco é válido se `int(hash_do_bloco, 16) <= alvo`. O hash é o do cabeçalho (SHA-256 com
-  separação de domínio), que já inclui o nonce. Produtor e assinatura ficam vazios: quem recebe a
-  recompensa é só o endereço da coinbase.
-* O alvo NÃO vai no cabeçalho: é derivado do histórico (como no Ethereum), então ninguém pode
-  declarar a própria dificuldade. A cada `pow_retarget_interval` blocos o alvo é recalculado pelo
-  tempo real gasto nos últimos intervalos, com ajuste limitado a 4x para cima ou para baixo.
-* A cadeia vencedora é a de MAIOR TRABALHO ACUMULADO (não a mais longa).
+Rules
+-----
+* The block is valid if `int(block_hash, 16) <= target`. The hash is the header's (SHA-256 with
+  domain separation), which already includes the nonce. Producer and signature stay empty: whoever receives the
+  reward is just the coinbase address.
+* The target does NOT go in the header: it is derived from history (as in Ethereum), so nobody can
+  declare their own difficulty. Every `pow_retarget_interval` blocks the target is recomputed from the
+  actual time spent in the last intervals, with the adjustment limited to 4x up or down.
+* The winning chain is the one with the MOST ACCUMULATED WORK (not the longest).
 
-Limitação conhecida: SHA-256 favorece hardware dedicado (ASIC). A escolha do algoritmo é uma
-decisão de governança a tomar antes de uma rede com valor real (ver docs/decentralization.md).
+Known limitation: SHA-256 favors dedicated hardware (ASIC). Choosing the algorithm is a
+governance decision to be made before a network with real value (see docs/decentralization.md).
 """
 import hashlib
 import threading
@@ -33,14 +33,14 @@ def hash_to_int(block_hash_hex: str) -> int:
 
 
 def work_for_target(target: int) -> int:
-    """Trabalho esperado (nº médio de tentativas) para achar um hash <= alvo."""
+    """Expected work (average number of attempts) to find a hash <= target."""
     return (1 << 256) // (target + 1)
 
 
 class ProofOfWork(Consensus):
     name = "pow"
 
-    # ---- dificuldade ----
+    # ---- difficulty ----
     def next_target(self, prev: Block, params: ChainParams, view) -> int:
         limit = int(params.pow_limit, 16)
         interval = params.pow_retarget_interval
@@ -48,7 +48,7 @@ class ProofOfWork(Consensus):
         prev_target = view.target_of(prev.hash) if prev.height > 0 else limit
         if height % interval != 0:
             return prev_target
-        first = view.ancestor(prev, interval - 1)           # bloco de altura `height - interval`
+        first = view.ancestor(prev, interval - 1)           # block at height `height - interval`
         if first is None:
             return prev_target
         expected = (interval - 1) * params.target_block_time
@@ -59,25 +59,25 @@ class ProofOfWork(Consensus):
     def block_work(self, target: int) -> int:
         return work_for_target(target)
 
-    # ---- verificação ----
+    # ---- verification ----
     def verify_block(self, block: Block, prev: Block, params: ChainParams, view=None) -> None:
         if prev is None or view is None:
-            raise ValidationError("PoW exige o contexto da cadeia (alvo derivado do histórico)")
+            raise ValidationError("PoW requires the chain context (target derived from history)")
         if block.producer != "" or block.signature != "":
-            raise ValidationError("bloco PoW não tem produtor nem assinatura")
+            raise ValidationError("a PoW block has no producer or signature")
         if block.nonce > MAX_NONCE:
-            raise ValidationError("nonce fora do intervalo")
+            raise ValidationError("nonce out of range")
         target = self.next_target(prev, params, view)
         if hash_to_int(block.hash) > target:
-            raise ValidationError("prova de trabalho insuficiente")
+            raise ValidationError("insufficient proof of work")
 
     def seal(self, block: Block, keypair=None) -> Block:
-        raise ValidationError("em PoW use mine(); não há selo por chave")
+        raise ValidationError("in PoW use mine(); there is no key seal")
 
-    # ---- mineração ----
+    # ---- mining ----
     @staticmethod
     def _split_header(block: Block):
-        """Pré-calcula prefixo e sufixo do JSON canônico: só o nonce muda a cada tentativa."""
+        """Precomputes the canonical JSON prefix and suffix: only the nonce changes on each attempt."""
         h = block.header()
         h["nonce"] = _SENTINEL
         blob = _DOMAIN + canonical_json(h)
@@ -87,7 +87,7 @@ class ProofOfWork(Consensus):
 
     @classmethod
     def search(cls, block: Block, target: int, start: int, count: int, stop: threading.Event | None = None):
-        """Procura um nonce em [start, start+count). Retorna o nonce ou None. Não toca no estado."""
+        """Searches for a nonce in [start, start+count). Returns the nonce or None. Does not touch state."""
         prefix, suffix = cls._split_header(block)
         base = hashlib.sha256(prefix)
         end = min(start + count, MAX_NONCE + 1)
@@ -103,7 +103,7 @@ class ProofOfWork(Consensus):
     @classmethod
     def mine(cls, block: Block, target: int, max_tries: int = 50_000_000,
              stop: threading.Event | None = None) -> Block | None:
-        """Bloqueia até achar um nonce (ou desistir). Retorna o bloco com o nonce, ou None."""
+        """Blocks until a nonce is found (or gives up). Returns the block with the nonce, or None."""
         n = cls.search(block, target, 0, max_tries, stop)
         if n is None:
             return None

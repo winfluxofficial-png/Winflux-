@@ -9,7 +9,7 @@ from winflux.crypto.keys import KeyPair
 WFLX = 10**8
 T0 = 1_700_000_000
 NOW = T0 + 10_000
-KDF_N = 2**10  # barato para testes
+KDF_N = 2**10  # cheap for tests
 
 
 def kp(n: int) -> KeyPair:

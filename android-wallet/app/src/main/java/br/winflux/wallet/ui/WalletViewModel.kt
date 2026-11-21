@@ -62,7 +62,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
             store.nextIndex = 0
             engine = WalletEngine(hd, NodeApi(nodeUrl), 0)
             screen = Screen.HOME
-            refresh()                                   // descobre os endereços já usados (gap 20)
+            refresh()                                   // discovers the addresses already used (gap 20)
         } catch (e: IllegalArgumentException) {
             message = e.message
         }
@@ -81,7 +81,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setNode(url: String) {
         val n = NodeUrl.normalize(url)
-        if (n == null) { message = "Use https://… ou http:// só com IP local (ex.: http://192.168.0.10:8081)"; return }
+        if (n == null) { message = "Use https://… or http:// only with a local IP (e.g.: http://192.168.0.10:8081)"; return }
         store.nodeUrl = n; nodeUrl = n
         val master = store.loadMaster() ?: return
         engine = WalletEngine(HdWallet(master, BcEd25519), NodeApi(n), store.nextIndex)
@@ -91,7 +91,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     fun prepareSend(to: String, amountText: String) {
         val e = engine ?: return
         val amount = Units.parse(amountText)
-        if (amount == null || amount <= 0) { message = "Valor inválido (até 8 casas decimais)"; return }
+        if (amount == null || amount <= 0) { message = "Invalid amount (up to 8 decimal places)"; return }
         launchIo { prepared = e.prepare(to.trim(), amount) }
     }
 
@@ -114,7 +114,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             busy = true
             try { withContext(Dispatchers.IO) { block() } }
-            catch (e: Exception) { message = e.message ?: "erro" }   // InsufficientFunds, NodeException, WalletException…
+            catch (e: Exception) { message = e.message ?: "error" }   // InsufficientFunds, NodeException, WalletException…
             finally { busy = false }
         }
     }

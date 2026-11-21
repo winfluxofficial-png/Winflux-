@@ -7,7 +7,7 @@ data class NodeParams(
 data class AddrUtxo(val txid: String, val index: Int, val value: Long, val spendableAt: Long)
 data class AddrInfo(val address: String, val balance: Long, val seen: Boolean, val height: Long, val utxos: List<AddrUtxo>)
 
-/** Conexão com um nó (qualquer nó serve: a API não tem contas). Bloqueante; o app chama fora da thread principal. */
+/** Connection to a node (any node will do: the API has no accounts). Blocking; the app calls it off the main thread. */
 interface Node {
     fun params(): NodeParams
     fun address(address: String): AddrInfo
@@ -17,7 +17,7 @@ interface Node {
 data class Snapshot(val balance: Long, val spendable: Long, val height: Long, val receiveAddress: String, val nextIndex: Int)
 data class Prepared(val tx: SignedTx, val fee: Long, val amount: Long, val to: String, val change: String?, val nextIndexAfter: Int)
 
-/** Lógica da carteira sobre um nó: descoberta de endereços (gap 20), saldo, preparo e envio. Sem Android. */
+/** Wallet logic on top of a node: address discovery (gap 20), balance, preparation and sending. No Android. */
 class WalletEngine(val hd: HdWallet, private val node: Node, nextIndex: Int = 0) {
     var nextIndex: Int = nextIndex
         private set
@@ -28,12 +28,12 @@ class WalletEngine(val hd: HdWallet, private val node: Node, nextIndex: Int = 0)
 
     fun params(): NodeParams = params ?: node.params().also { params = it }
 
-    /** Varre os endereços até 20 vazios seguidos; atualiza saldo, UTXOs e o próximo endereço de recebimento. */
+    /** Scans the addresses until 20 empty ones in a row; updates the balance, UTXOs and the next receiving address. */
     fun refresh(gap: Int = GAP_LIMIT): Snapshot {
         params = node.params()
         scanned.clear()
         var i = 0; var misses = 0; var lastUsed = -1
-        while (misses < gap || i < nextIndex) {      // até `gap` vazios seguidos E além dos endereços já entregues
+        while (misses < gap || i < nextIndex) {      // until `gap` empty ones in a row AND beyond the addresses already handed out
             val info = node.address(hd.address(i))
             scanned.add(i to info)
             if (info.seen) { lastUsed = i; misses = 0 } else misses++
@@ -42,12 +42,12 @@ class WalletEngine(val hd: HdWallet, private val node: Node, nextIndex: Int = 0)
         nextIndex = maxOf(nextIndex, lastUsed + 1)
         height = scanned.maxOfOrNull { it.second.height } ?: 0
         val live = scanned.flatMap { (_, a) -> a.utxos.map { it.txid to it.index } }.toSet()
-        pendingSpent.retainAll(live)                 // o que já saiu do UTXO set deixa de ser "pendente"
+        pendingSpent.retainAll(live)                 // what has already left the UTXO set is no longer "pending"
         val spendable = spendableUtxos().sumOf { it.value }
         return Snapshot(scanned.sumOf { it.second.balance }, spendable, height, receiveAddress(), nextIndex)
     }
 
-    /** Primeiro endereço (≥ nextIndex) ainda não visto na cadeia: nunca reutiliza. */
+    /** First address (≥ nextIndex) not yet seen on the chain: never reuses. */
     fun receiveAddress(): String {
         var i = nextIndex
         while (scanned.any { it.first == i && it.second.seen }) i++
@@ -55,7 +55,7 @@ class WalletEngine(val hd: HdWallet, private val node: Node, nextIndex: Int = 0)
     }
 
     private fun spendableUtxos(): List<Utxo> {
-        val next = height + 1                         // altura do próximo bloco (maturidade das recompensas)
+        val next = height + 1                         // height of the next block (reward maturity)
         return scanned.flatMap { (_, a) ->
             a.utxos.filter { it.spendableAt <= next && (it.txid to it.index) !in pendingSpent }
                 .map { Utxo(it.txid, it.index, it.value, a.address) }
@@ -76,7 +76,7 @@ class WalletEngine(val hd: HdWallet, private val node: Node, nextIndex: Int = 0)
         return Prepared(tx, TxBuilder.feeOf(tx, utxos), amount, to, if (usesChange) change else null, if (usesChange) ci + 1 else nextIndex)
     }
 
-    /** Envia e marca as moedas como pendentes (evita reutilizá-las antes da inclusão em bloco). */
+    /** Sends and marks the coins as pending (avoids reusing them before inclusion in a block). */
     fun send(p: Prepared): String {
         val txid = node.submit(p.tx.toJson())
         p.tx.inputs.forEach { pendingSpent.add(it.txid to it.index) }

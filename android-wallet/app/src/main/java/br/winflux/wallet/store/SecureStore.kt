@@ -11,10 +11,10 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Guarda a semente-mestra cifrada com AES-256-GCM, usando uma chave NÃO exportável do Android Keystore
- * (StrongBox quando o aparelho tem). A semente nunca é gravada em claro. Sem backup em nuvem (ver manifesto).
- * Limite honesto: protege contra leitura dos arquivos do app; não protege contra aparelho com root + app malicioso
- * em execução, nem substitui a chave de recuperação anotada pelo usuário.
+ * Stores the master seed encrypted with AES-256-GCM, using a NON-exportable Android Keystore key
+ * (StrongBox when the device has it). The seed is never written in the clear. No cloud backup (see the manifest).
+ * Honest limit: it protects against reading the app's files; it does not protect against a rooted device + a malicious
+ * app running, nor does it replace the recovery key the user wrote down.
  */
 class SecureStore(context: Context) {
     private val prefs = context.getSharedPreferences("winflux_wallet", Context.MODE_PRIVATE)
@@ -65,7 +65,7 @@ class SecureStore(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_NODE = "http://10.0.2.2:8081"   // emulador -> nó no PC; no celular, use o IP do PC na Wi-Fi
+        const val DEFAULT_NODE = "http://10.0.2.2:8081"   // emulator -> node on the PC; on the phone, use the PC's IP on the Wi-Fi
         private const val ANDROID_KS = "AndroidKeyStore"
         private const val ALIAS = "winflux_wallet_master_key"
         private const val TRANSFORM = "AES/GCM/NoPadding"

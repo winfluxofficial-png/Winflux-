@@ -1,4 +1,4 @@
-"""Consistência da release: versão única, pontos de entrada e documentos prometidos existem."""
+"""Release consistency: single version, entry points and promised documents exist."""
 import os
 import re
 

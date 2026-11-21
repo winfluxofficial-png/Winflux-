@@ -1,4 +1,4 @@
-"""Parâmetros monetários e de consenso da rede (imutáveis para uma dada chain)."""
+"""Network monetary and consensus parameters (immutable for a given chain)."""
 from dataclasses import dataclass
 
 from ..crypto.hashing import canonical_json, sha256_hex
@@ -11,43 +11,43 @@ class ChainParams:
     name: str
     symbol: str
     decimals: int
-    max_supply: int          # em unidades
-    block_reward: int        # em unidades
-    halving_interval: int    # blocos; 0 = sem halving
-    min_fee: int             # em unidades
-    authorities: tuple       # pubkeys hex dos produtores (PoA de testes)
+    max_supply: int          # in units
+    block_reward: int        # in units
+    halving_interval: int    # blocks; 0 = no halving
+    min_fee: int             # in units
+    authorities: tuple       # producers' pubkeys in hex (test PoA)
     max_block_txs: int = 2000
     max_tx_size: int = 100_000
     max_tx_inputs: int = 256
     max_tx_outputs: int = 256
     max_future_drift: int = 7200
-    min_fee_per_byte: int = 1       # taxa mínima proporcional ao tamanho (unidades/byte)
-    max_block_bytes: int = 1_000_000  # tamanho máximo do bloco (JSON canônico)
-    # --- cofres offline (docs/offline-payments.md, Revisão 2) ---
-    target_block_time: int = 5          # segundos (devnet); converte tempo <-> altura
+    min_fee_per_byte: int = 1       # minimum fee proportional to size (units/byte)
+    max_block_bytes: int = 1_000_000  # maximum block size (canonical JSON)
+    # --- offline vaults (docs/offline-payments.md, Revision 2) ---
+    target_block_time: int = 5          # seconds (devnet); converts time <-> height
     vault_max_slots: int = 64
-    vault_collateral_min_pct: int = 100  # ρ mínimo, em %
-    vault_ttl_min_blocks: int = 17_280   # ~1 dia a 5 s/bloco
-    vault_ttl_max_blocks: int = 518_400  # ~30 dias
-    claim_window_blocks: int = 120_960   # ~7 dias após a expiração
+    vault_collateral_min_pct: int = 100  # minimum ρ, in %
+    vault_ttl_min_blocks: int = 17_280   # ~1 day at 5 s/block
+    vault_ttl_max_blocks: int = 518_400  # ~30 days
+    claim_window_blocks: int = 120_960   # ~7 days after expiry
     min_voucher: int = 0                 # 0 => 10 x min_fee
     vault_max_value: int = 10_000 * 10**8
-    max_compensations_per_slot: int = 16  # R9 (exposure.py): limita estado e verificação
-    # --- consenso público (PoW) e maturidade ---
-    consensus: str = "poa"               # "poa" (testes, autoridades) | "pow" (sem autoridades)
-    pow_limit: str = "f" * 64            # alvo máximo (dificuldade mínima), hex de 64 dígitos
-    pow_retarget_interval: int = 144     # blocos entre ajustes de dificuldade
-    coinbase_maturity: int = 0           # blocos até a recompensa poder ser gasta (0 = imediato)
+    max_compensations_per_slot: int = 16  # R9 (exposure.py): bounds state and verification
+    # --- public consensus (PoW) and maturity ---
+    consensus: str = "poa"               # "poa" (tests, authorities) | "pow" (no authorities)
+    pow_limit: str = "f" * 64            # maximum target (minimum difficulty), 64-digit hex
+    pow_retarget_interval: int = 144     # blocks between difficulty adjustments
+    coinbase_maturity: int = 0           # blocks until the reward can be spent (0 = immediate)
 
     def __post_init__(self):
         def bad(msg):
-            raise ValidationError(f"parâmetros inválidos: {msg}")
+            raise ValidationError(f"invalid parameters: {msg}")
         if not self.chain_id or len(self.chain_id) > 64:
             bad("chain_id")
         if not (0 <= self.decimals <= 18):
             bad("decimals")
         if self.max_supply <= 0 or self.block_reward < 0 or self.min_fee < 0:
-            bad("valores monetários")
+            bad("monetary values")
         if self.halving_interval < 0:
             bad("halving_interval")
         if self.max_block_txs < 1:
@@ -79,14 +79,14 @@ class ChainParams:
         if not 0 <= self.coinbase_maturity <= 10_000:
             bad("coinbase_maturity")
         if self.consensus == "pow" and self.authorities:
-            bad("rede PoW não tem autoridades (ninguém tem poder privilegiado)")
+            bad("a PoW network has no authorities (nobody has privileged power)")
 
     @property
     def min_voucher_value(self) -> int:
         return self.min_voucher or 10 * self.min_fee
 
     def reward_at(self, height: int) -> int:
-        """Recompensa agendada (antes de aplicar o teto de oferta)."""
+        """Scheduled reward (before applying the supply cap)."""
         if self.halving_interval == 0:
             return self.block_reward
         halvings = height // self.halving_interval
@@ -123,8 +123,8 @@ class ChainParams:
         except ValidationError:
             raise
         except Exception as e:
-            raise ValidationError(f"parâmetros malformados: {e}") from None
+            raise ValidationError(f"malformed parameters: {e}") from None
 
     def commitment(self) -> str:
-        """Hash dos parâmetros; vai no cabeçalho do gênese."""
+        """Hash of the parameters; goes in the genesis header."""
         return sha256_hex(b"WFLX-PARAMS-V1" + canonical_json(self.to_dict()))

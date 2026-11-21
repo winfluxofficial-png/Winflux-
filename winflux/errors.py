@@ -1,21 +1,21 @@
-"""Exceções do projeto Winflux."""
+"""Winflux project exceptions."""
 
 
 class WinfluxError(Exception):
-    """Base de todos os erros do projeto."""
+    """Base of all the project's errors."""
 
 
 class ValidationError(WinfluxError):
-    """Dado (transação, bloco, mensagem) viola as regras do protocolo."""
+    """Data (transaction, block, message) violates the protocol rules."""
 
 
 class StorageError(WinfluxError):
-    """Falha ou corrupção na persistência local."""
+    """Failure or corruption in local persistence."""
 
 
 class WalletError(WinfluxError):
-    """Erro de carteira (senha incorreta, keystore inválido...)."""
+    """Wallet error (wrong password, invalid keystore...)."""
 
 
 class InsufficientFunds(WalletError):
-    """Saldo insuficiente para montar a transação."""
+    """Insufficient funds to build the transaction."""

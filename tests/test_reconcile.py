@@ -1,4 +1,4 @@
-"""A4: reconciliação do dono do cofre (diário × cadeia), API de cofres e CLI. A projeção bate com o consenso."""
+"""A4: vault owner reconciliation (journal × chain), vault API and CLI. The projection matches consensus."""
 import asyncio
 import json
 import random
@@ -38,13 +38,13 @@ def issue(w, journal, slot, to, req, value=None):
 
 
 def real_refund(w, keys):
-    """Executa o reembolso de verdade e devolve (líquido recebido pelo dono, supply antes/depois)."""
+    """Performs the refund for real and returns (net amount received by the owner, supply before/after)."""
     before = w.chain.balance(keys["alice"].address)
     mine(w.chain, keys, [build_vault_refund(w.chain.get_vault(w.vid), w.chain.params)])
     return w.chain.balance(keys["alice"].address) - before
 
 
-# ================================================================== diário
+# ================================================================== journal
 def test_journal_roundtrip_dedup_and_strictness(w, tmp_path):
     j = Journal()
     pay = direct(w, w.keys["bob"].address)
@@ -53,9 +53,9 @@ def test_journal_roundtrip_dedup_and_strictness(w, tmp_path):
     j.save(path)
     assert Journal.load(path).to_dict() == j.to_dict()
     assert oct(__import__("os").stat(path).st_mode & 0o777) == "0o600"
-    assert Journal.load(str(tmp_path / "nao-existe.json")).to_dict() == Journal().to_dict()
-    with pytest.raises(ValidationError, match="raiz"):
-        j.record_hop(pay.hops[0], 1)                               # salto da vaga 0 registrado como vaga 1
+    assert Journal.load(str(tmp_path / "does-not-exist.json")).to_dict() == Journal().to_dict()
+    with pytest.raises(ValidationError, match="root"):
+        j.record_hop(pay.hops[0], 1)                               # hop of slot 0 recorded as slot 1
     good = j.to_dict()
     for bad in (None, [], {}, {"v": 2, "entries": []}, {**good, "x": 1}, {"v": 1, "entries": [{}]},
                 {"v": 1, "entries": [{"vault_id": "zz", "slot": 0, "root_txid": "00" * 32}]},
@@ -63,14 +63,14 @@ def test_journal_roundtrip_dedup_and_strictness(w, tmp_path):
                 {"v": 1, "entries": [{"vault_id": "00" * 32, "slot": True, "root_txid": "00" * 32}]}):
         with pytest.raises(ValidationError):
             Journal.from_dict(bad)
-    (tmp_path / "ruim.json").write_text("{nao é json")
-    with pytest.raises(ValidationError, match="corrompido"):
-        Journal.load(str(tmp_path / "ruim.json"))
+    (tmp_path / "bad.json").write_text("{not json")
+    with pytest.raises(ValidationError, match="corrupted"):
+        Journal.load(str(tmp_path / "bad.json"))
 
 
 def test_vault_from_dict_is_the_inverse_of_to_dict(w, keys):
     claim(w, direct(w, keys["bob"].address))
-    claim(w, direct(w, keys["carol"].address, req=R[1]))             # conflito: preenche comp_leaves
+    claim(w, direct(w, keys["carol"].address, req=R[1]))             # conflict: fills comp_leaves
     v = w.chain.get_vault(w.vid)
     again = V.Vault.from_dict(json.loads(json.dumps(v.to_dict())))
     assert again == v
@@ -80,12 +80,12 @@ def test_vault_from_dict_is_the_inverse_of_to_dict(w, keys):
             V.Vault.from_dict(bad)
 
 
-# ================================================================== estados das vagas
+# ================================================================== slot states
 def test_unused_vault_refund_is_projected_exactly(w, keys):
     r = rep(w, Journal())
     assert [s.status for s in r.slots] == [RC.UNUSED, RC.UNUSED] and r.clean and not r.warnings
-    assert r.claims_open and not r.can_refund_now and r.refund_total == 2 * CAP + 2 * CAP  # depósito + colateral 100%
-    with pytest.raises(ValidationError, match="janela"):
+    assert r.claims_open and not r.can_refund_now and r.refund_total == 2 * CAP + 2 * CAP  # deposit + 100% collateral
+    with pytest.raises(ValidationError, match="window"):
         V.plan_refund(w.chain.get_vault(w.vid), w.chain.params, w.chain.height + 1)
     to_deadline(w.chain, keys, w.vid)
     r = rep(w, Journal())
@@ -93,7 +93,7 @@ def test_unused_vault_refund_is_projected_exactly(w, keys):
     assert real_refund(w, keys) == r.refund_net
     r2 = rep(w, Journal())
     assert r2.state == "CLOSED" and r2.refund_total == 0 and not r2.can_refund_now
-    assert any("encerrado" in x for x in r2.warnings)
+    assert any("closed" in x for x in r2.warnings)
 
 
 def test_outstanding_then_lapsed_when_receivers_never_claim(w, keys):
@@ -101,12 +101,12 @@ def test_outstanding_then_lapsed_when_receivers_never_claim(w, keys):
     issue(w, j, 0, keys["bob"].address, R[0])
     r = rep(w, j)
     assert r.slots[0].status == RC.OUTSTANDING and r.slots[0].unsettled_issued == CAP
-    assert r.slots[1].status == RC.UNUSED and any("ainda pode liquidar" in x for x in r.warnings)
+    assert r.slots[1].status == RC.UNUSED and any("can still settle" in x for x in r.warnings)
     assert r.blocks_until_refund > 0
     to_deadline(w.chain, keys, w.vid)
     r = rep(w, j)
     assert r.slots[0].status == RC.LAPSED and r.can_refund_now
-    assert any("perdeu" in x for x in r.warnings)                      # avisa que o recebedor perdeu o direito
+    assert any("lost" in x for x in r.warnings)                      # warns that the receiver lost the right
     assert real_refund(w, keys) == r.refund_net == 2 * CAP + 2 * CAP - FEE
 
 
@@ -127,35 +127,35 @@ def test_settled_and_partial_slots(w, keys):
     assert real_refund(w, keys) == r.refund_net == (CAP - 10 * WFLX) + 2 * CAP - FEE
 
 
-# ================================================================== sinais de problema
+# ================================================================== problem signals
 def test_chain_spend_the_journal_does_not_know_is_divergent(w, keys):
-    claim(w, direct(w, keys["bob"].address))                            # chave "clonada": nada no diário
+    claim(w, direct(w, keys["bob"].address))                            # "cloned" key: nothing in the journal
     r = rep(w, Journal())
     assert RC.DIVERGENT in r.slots[0].flags and r.slots[0].status == RC.SETTLED and not r.clean
-    assert any("NÃO registra" in x for x in r.warnings)
+    assert any("does NOT record" in x for x in r.warnings)
     j = Journal()
-    j.add(w.vid, 0, "ab" * 32)                                          # diário tem outra raiz
+    j.add(w.vid, 0, "ab" * 32)                                          # journal has another root
     assert RC.DIVERGENT in rep(w, j).slots[0].flags
     j2 = Journal()
     issue(w, j2, 0, keys["bob"].address, R[0])
-    assert rep(w, j2).clean                                             # com a raiz certa, não diverge
+    assert rep(w, j2).clean                                             # with the right root, it does not diverge
 
 
 def test_double_spend_is_reported_with_burned_collateral_and_matches_consensus(w, keys):
     j = Journal()
     issue(w, j, 0, keys["bob"].address, R[0])
-    issue(w, j, 0, keys["carol"].address, R[1])                         # o dono emitiu a mesma vaga duas vezes
+    issue(w, j, 0, keys["carol"].address, R[1])                         # the owner issued the same slot twice
     claim(w, direct(w, keys["bob"].address, req=R[0]))
     claim(w, direct(w, keys["carol"].address, req=R[1]))
     r = rep(w, j)
     assert set(r.slots[0].flags) == {RC.DOUBLE_ISSUED, RC.CONFLICT} and r.fraud and r.slots[0].compensated == CAP
-    assert any("Gasto duplo" in x for x in r.warnings)
+    assert any("Double spend" in x for x in r.warnings)
     to_deadline(w.chain, keys, w.vid)
     r = rep(w, j)
     assert r.burned == slot_of(w, 0).collateral_left + slot_of(w, 1).collateral_left == CAP
-    assert any("QUEIMADO" in x for x in r.warnings)
+    assert any("BURNED" in x for x in r.warnings)
     supply = w.chain.total_supply()
-    assert real_refund(w, keys) == r.refund_net == CAP - FEE            # só a vaga 1 (não usada); colateral queimado
+    assert real_refund(w, keys) == r.refund_net == CAP - FEE            # only slot 1 (unused); collateral burned
     assert w.chain.total_supply() == supply + 50 * WFLX - r.burned
 
 
@@ -163,10 +163,10 @@ def test_render_is_readable_and_mentions_everything(w, keys):
     j = Journal()
     issue(w, j, 0, keys["bob"].address, R[0])
     out = render(rep(w, j), "WFLX")
-    assert "vaga 0: OUTSTANDING" in out and "vaga 1: UNUSED" in out and "ainda indisponível" in out
+    assert "slot 0: OUTSTANDING" in out and "slot 1: UNUSED" in out and "not yet available" in out
 
 
-# ================================================================== propriedade: a projeção SEMPRE bate com o consenso
+# ================================================================== property: the projection ALWAYS matches consensus
 @pytest.mark.parametrize("seed", range(14))
 def test_random_scenarios_projection_equals_real_refund(keys, seed):
     rng = random.Random(seed)
@@ -201,11 +201,11 @@ def test_random_scenarios_projection_equals_real_refund(keys, seed):
     supply = w.chain.total_supply()
     got = real_refund(w, keys)
     assert got == r.refund_net
-    assert w.chain.total_supply() == supply + 50 * WFLX - r.burned           # nada some nem aparece, além do queimado
+    assert w.chain.total_supply() == supply + 50 * WFLX - r.burned           # nothing disappears or appears, apart from what was burned
     assert w.chain.get_vault(w.vid).locked() == 0
 
 
-# ================================================================== API de cofres
+# ================================================================== vault API
 def test_vault_api_routes(w, keys):
     claim(w, direct(w, keys["bob"].address))
     api = ApiServer(SimpleNamespace(chain=w.chain))
@@ -218,11 +218,11 @@ def test_vault_api_routes(w, keys):
     code, lst = asyncio.run(api._route("GET", f"/api/vaults/{keys['bob'].address}", b""))
     assert code == 200 and lst["vaults"] == []
     for path, want in ((f"/api/vault/{'0' * 64}", 404), ("/api/vault/xyz", 400), (f"/api/vault/{w.vid.upper()}", 400),
-                       ("/api/vaults/lixo", 400)):
+                       ("/api/vaults/garbage", 400)):
         assert asyncio.run(api._route("GET", path, b""))[0] == want
 
 
-# ================================================================== CLI de ponta a ponta (reconcile + vault-refund)
+# ================================================================== end-to-end CLI (reconcile + vault-refund)
 def test_cli_reconcile_and_refund_end_to_end(w, keys, tmp_path, capsys, monkeypatch):
     j = Journal()
     issue(w, j, 0, keys["bob"].address, R[0])
@@ -230,7 +230,7 @@ def test_cli_reconcile_and_refund_end_to_end(w, keys, tmp_path, capsys, monkeypa
     j.save(jpath)
 
     async def submit_tx(tx):
-        w.chain.check_transaction(tx)                      # como o mempool do nó: recusa antes de minerar
+        w.chain.check_transaction(tx)                      # like the node's mempool: rejects before mining
         mine(w.chain, keys, [tx])
         return tx.txid
 
@@ -243,16 +243,16 @@ def test_cli_reconcile_and_refund_end_to_end(w, keys, tmp_path, capsys, monkeypa
         try:
             assert await call("reconcile", w.vid, "--journal", jpath) == 0
             out = capsys.readouterr().out
-            assert "OUTSTANDING" in out and "ainda indisponível" in out
-            assert await call("vault-refund", w.vid) == 1                        # janela aberta: o nó recusa
-            assert "janela" in capsys.readouterr().err
+            assert "OUTSTANDING" in out and "not yet available" in out
+            assert await call("vault-refund", w.vid) == 1                        # window open: the node refuses
+            assert "window" in capsys.readouterr().err
             to_deadline(w.chain, keys, w.vid)
             before = w.chain.balance(keys["alice"].address)
             assert await call("vault-refund", w.vid) == 0
-            assert "reembolso enviado" in capsys.readouterr().out
+            assert "refund sent" in capsys.readouterr().out
             assert w.chain.balance(keys["alice"].address) > before and w.chain.get_vault(w.vid).state == "CLOSED"
             assert await call("reconcile", w.vid, "--journal", jpath) == 0
-            assert "encerrado" in capsys.readouterr().out
+            assert "closed" in capsys.readouterr().out
             assert await call("reconcile", "00" * 32) == 1
         finally:
             await api.stop()
@@ -260,13 +260,13 @@ def test_cli_reconcile_and_refund_end_to_end(w, keys, tmp_path, capsys, monkeypa
 
 
 def test_window_boundary_agrees_with_consensus_at_every_height(w, keys):
-    """Em toda altura perto do prazo, o relatório concorda com o que o nó realmente aceita (claim x reembolso)."""
+    """At every height near the deadline, the report agrees with what the node actually accepts (claim x refund)."""
     pay = direct(w, keys["bob"].address)
     j = Journal()
     j.record_hop(pay.hops[0], 0)
     deadline = V.claim_deadline(w.chain.get_vault(w.vid), w.chain.params)
     advance(w.chain, keys, deadline - 2 - w.chain.height)
-    for _ in range(4):                                             # alturas deadline-2 .. deadline+1
+    for _ in range(4):                                             # heights deadline-2 .. deadline+1
         r = rep(w, j)
         vault = w.chain.get_vault(w.vid)
         claim_ok = refund_ok = True

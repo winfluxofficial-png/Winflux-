@@ -1,4 +1,4 @@
-"""Livro-razão: UTXO set + registro de cofres, com validação e aplicação por tipo de transação."""
+"""Ledger: UTXO set + vault registry, with validation and application per transaction type."""
 import copy
 from dataclasses import dataclass
 
@@ -16,15 +16,15 @@ from ..errors import ValidationError
 class Checked:
     fee: int
     kind: str
-    vault: V.Vault | None = None      # vault_open: o cofre a registrar
-    plan: object = None               # claim/refund: plano calculado na validação
+    vault: V.Vault | None = None      # vault_open: the vault to register
+    plan: object = None               # claim/refund: plan computed during validation
 
 
 @dataclass
 class LedgerUndo:
     utxo: Undo | None = None
     vault: V.VaultUndo | None = None
-    coinbase: list | None = None      # outpoints de coinbase registrados (para a maturidade)
+    coinbase: list | None = None      # registered coinbase outpoints (for maturity)
 
 
 class Ledger:
@@ -32,30 +32,30 @@ class Ledger:
         self.params = params
         self.utxo = UTXOSet()
         self.vaults = V.VaultRegistry()
-        self._coinbase_height: dict = {}   # outpoint -> altura da coinbase (exceto o gênese)
+        self._coinbase_height: dict = {}   # outpoint -> coinbase height (except the genesis)
 
     def total_supply(self) -> int:
-        """Oferta = UTXOs + valor travado em cofres (colateral queimado já saiu da conta)."""
+        """Supply = UTXOs + value locked in vaults (burned collateral has already left the count)."""
         return self.utxo.total_value + self.vaults.total_locked
 
     def state_root(self) -> str:
-        """Raiz Merkle do registro de cofres (vai no cabeçalho de cada bloco)."""
+        """Merkle root of the vault registry (goes in each block's header)."""
         return registry_root(self.params.chain_id, self.vaults)
 
     def check(self, tx: Transaction, height: int) -> Checked:
-        """Valida contra o estado atual, sem alterá-lo. `height` = altura do bloco de inclusão."""
+        """Validates against the current state, without changing it. `height` = height of the including block."""
         self._check_maturity(tx, height)
         checked = self._check(tx, height)
-        for i in range(len(tx.outputs)):  # defesa: nunca deixar a aplicação falhar com erro não-ValidationError
+        for i in range(len(tx.outputs)):  # defense: never let the application fail with a non-ValidationError error
             if self.utxo.get((tx.txid, i)) is not None:
-                raise ValidationError("transação repetida (saída já existe)")
+                raise ValidationError("repeated transaction (output already exists)")
         return checked
 
     def _check_maturity(self, tx: Transaction, height: int) -> None:
-        """Recompensas de mineração só podem ser gastas após `coinbase_maturity` blocos.
+        """Mining rewards can only be spent after `coinbase_maturity` blocks.
 
-        Protege contra reorganizações: se o bloco que criou a recompensa sair da cadeia,
-        nada que dependa dela já foi gasto.
+        Protects against reorganizations: if the block that created the reward leaves the chain,
+        nothing that depends on it has been spent yet.
         """
         m = self.params.coinbase_maturity
         if m == 0 or tx.is_coinbase:
@@ -63,7 +63,7 @@ class Ledger:
         for inp in tx.inputs:
             h = self._coinbase_height.get((inp.txid, inp.index))
             if h is not None and height - h < m:
-                raise ValidationError("recompensa de mineração ainda não amadureceu")
+                raise ValidationError("mining reward has not matured yet")
 
     def _check(self, tx: Transaction, height: int) -> Checked:
         p = self.params
@@ -81,10 +81,10 @@ class Ledger:
         if tx.kind == "vault_refund":
             fee, plan, vault = validate_vault_refund(tx, self.vaults, p, height)
             return Checked(fee, tx.kind, vault=vault, plan=plan)
-        raise ValidationError("tipo de transação desconhecido")
+        raise ValidationError("unknown transaction type")
 
     def apply(self, tx: Transaction, checked: Checked | None) -> LedgerUndo:
-        """Aplica uma transação já validada (ou a coinbase, com checked=None)."""
+        """Applies an already validated transaction (or the coinbase, with checked=None)."""
         undo = LedgerUndo()
         undo.utxo = self.utxo.apply_transaction(tx)
         try:

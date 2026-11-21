@@ -1,15 +1,15 @@
-"""Nota transferível e transação offline (A2) — formato binário e cadeia de proveniência.
+"""Transferable note and offline transaction (A2) — binary format and provenance chain.
 
-Modelo (docs/offline-chained-payments.md): a vaga raiz é uma nota de valor `cap`, dona = chave da vaga. Uma TRANSAÇÃO
-OFFLINE gasta uma nota e cria até 4 saídas: NOTA (dona = compromisso com a chave nova de alguém, repassável) ou ENDEREÇO
-(final, não repassável). Conservação EXATA: Σ saídas = valor da nota gasta. Cada pagamento carrega a cadeia
-`[t1 (gasta a raiz), t2 (gasta uma saída de t1), ...]` + a prova do cofre.
+Model (docs/offline-chained-payments.md): the root slot is a note of value `cap`, owner = the slot's key. An OFFLINE
+TRANSACTION spends a note and creates up to 4 outputs: NOTE (owner = commitment to someone's new key, re-transferable) or ADDRESS
+(final, not re-transferable). EXACT conservation: Σ outputs = value of the spent note. Each payment carries the chain
+`[t1 (spends the root), t2 (spends an output of t1), ...]` + the vault proof.
 
-    corpo da tx = versão(1) ‖ hash_chain(32) ‖ vault_id(32) ‖ nota_gasta(32) ‖ valor(u64) ‖ n(u8)
-                  ‖ n × [ valor(u64) ‖ tipo(u8) ‖ dono(32) ] ‖ request_id(16)
-    txid = H("WFLX-OTX-ID-V1" ‖ corpo);  assinatura = chave dona da nota gasta, sobre "WFLX-OTX-SIG-V1" ‖ corpo
-A assinatura e a chave pública NÃO entram no txid; a chave pública é revelada só ao gastar (o dono da nota é um
-compromisso de hash) — o que limita a exposição da chave (relevante contra ataque quântico).
+    tx body = version(1) ‖ chain_hash(32) ‖ vault_id(32) ‖ spent_note(32) ‖ value(u64) ‖ n(u8)
+                  ‖ n × [ value(u64) ‖ type(u8) ‖ owner(32) ] ‖ request_id(16)
+    txid = H("WFLX-OTX-ID-V1" ‖ body);  signature = key owning the spent note, over "WFLX-OTX-SIG-V1" ‖ body
+The signature and the public key do NOT enter the txid; the public key is revealed only when spending (the note's owner is a
+hash commitment) — which limits the key's exposure (relevant against quantum attack).
 """
 import re
 import struct
@@ -43,15 +43,15 @@ def child_note_id(txid: bytes, index: int) -> bytes:
 
 
 def owner_commitment(key_type: str, pubkey: bytes) -> bytes:
-    """Dona de uma nota NOTA: hash do (tipo, chave). A chave só é revelada ao gastar."""
+    """Owner of a NOTE: hash of (type, key). The key is only revealed when spending."""
     if key_type not in KEY_CODES or len(pubkey) != KEY_LENGTHS[key_type]:
-        raise ValidationError("chave inválida para compromisso de dono")
+        raise ValidationError("invalid key for an owner commitment")
     return sha256(b"WFLX-NOTE-OWNER-V1" + bytes([KEY_CODES[key_type]]) + pubkey)
 
 
 def address_owner(address: str) -> bytes:
     if not is_valid_address(address):
-        raise ValidationError("endereço inválido")
+        raise ValidationError("invalid address")
     return address_to_hash(address) + bytes(12)
 
 
@@ -79,7 +79,7 @@ class OfflineTx:
             outs = b"".join(struct.pack(_OUT, o.value, o.kind, o.owner) for o in self.outputs)
             return head + outs + struct.pack(">16s", self.request_id)
         except (struct.error, ValueError, TypeError) as e:
-            raise ValidationError(f"transação offline com campos inválidos: {e}") from None
+            raise ValidationError(f"offline transaction with invalid fields: {e}") from None
 
     @property
     def txid(self) -> bytes:
@@ -94,30 +94,30 @@ class OfflineTx:
     @classmethod
     def from_bytes(cls, raw) -> "OfflineTx":
         if not isinstance(raw, (bytes, bytearray)) or len(raw) < _HEAD_LEN + _OUT_LEN + 16:
-            raise ValidationError("transação offline curta demais")
+            raise ValidationError("offline transaction too short")
         raw = bytes(raw)
         ver, ch, vid, note, value, n = struct.unpack(_HEAD, raw[:_HEAD_LEN])
         if ver != VERSION:
-            raise ValidationError("versão de transação offline não suportada")
+            raise ValidationError("unsupported offline transaction version")
         if not 1 <= n <= MAX_OUTPUTS or len(raw) != _HEAD_LEN + n * _OUT_LEN + 16:
-            raise ValidationError("transação offline com tamanho/saídas inválidos")
+            raise ValidationError("offline transaction with invalid size/outputs")
         outs = []
         for i in range(n):
             v, kind, owner = struct.unpack(_OUT, raw[_HEAD_LEN + i * _OUT_LEN: _HEAD_LEN + (i + 1) * _OUT_LEN])
             if v <= 0 or v > MAX_VALUE or kind not in (KIND_NOTE, KIND_ADDRESS):
-                raise ValidationError("saída offline inválida")
+                raise ValidationError("invalid offline output")
             if kind == KIND_ADDRESS and owner[20:] != bytes(12):
-                raise ValidationError("dono do tipo endereço malformado")
+                raise ValidationError("malformed address-type owner")
             outs.append(NoteOutput(v, kind, owner))
         tx = cls(ch, vid.hex(), note, value, tuple(outs), raw[-16:], ver)
         if tx.input_value <= 0 or tx.input_value > MAX_VALUE:
-            raise ValidationError("valor de entrada inválido")
+            raise ValidationError("invalid input value")
         return tx
 
 
 @dataclass(frozen=True)
 class Hop:
-    """Um salto: transação offline + a chave que a assinou (revelada aqui) + assinatura + atestação (opcional)."""
+    """A hop: offline transaction + the key that signed it (revealed here) + signature + attestation (optional)."""
     tx: OfflineTx
     key_type: str
     pubkey: bytes
@@ -131,23 +131,23 @@ class Hop:
     @classmethod
     def from_dict(cls, d) -> "Hop":
         if not isinstance(d, dict) or set(d) != {"tx", "key_type", "pubkey", "sig", "att"}:
-            raise ValidationError("salto malformado")
+            raise ValidationError("malformed hop")
         if not (isinstance(d["key_type"], str) and d["key_type"] in KEY_CODES):
-            raise ValidationError("tipo de chave inválido no salto")
+            raise ValidationError("invalid key type in the hop")
         for k, n in (("tx", None), ("pubkey", 2 * KEY_LENGTHS[d["key_type"]]), ("sig", 128)):
             if not (isinstance(d[k], str) and _HEX.match(d[k]) and (n is None or len(d[k]) == n)):
-                raise ValidationError("campo hexadecimal inválido no salto")
+                raise ValidationError("invalid hexadecimal field in the hop")
         if len(d["tx"]) > 2 * (_HEAD_LEN + MAX_OUTPUTS * _OUT_LEN + 16):
-            raise ValidationError("transação offline grande demais")
+            raise ValidationError("offline transaction too large")
         if d["att"] is not None and not isinstance(d["att"], dict):
-            raise ValidationError("atestação malformada")
+            raise ValidationError("malformed attestation")
         return cls(OfflineTx.from_bytes(bytes.fromhex(d["tx"])), d["key_type"], bytes.fromhex(d["pubkey"]),
                    bytes.fromhex(d["sig"]), d["att"])
 
 
 @dataclass(frozen=True)
 class OfflinePayment:
-    """O que Bob entrega a Carlos: prova do cofre + cadeia de saltos + qual saída é a dele."""
+    """What Bob hands to Carlos: vault proof + chain of hops + which output is his."""
     proof: dict
     slot: int
     hops: tuple
@@ -160,18 +160,18 @@ class OfflinePayment:
     @classmethod
     def from_dict(cls, d) -> "OfflinePayment":
         if not isinstance(d, dict) or set(d) != {"v", "proof", "slot", "hops", "leaf"} or d["v"] != 1:
-            raise ValidationError("pagamento offline malformado")
+            raise ValidationError("malformed offline payment")
         for k in ("slot", "leaf"):
             if not isinstance(d[k], int) or isinstance(d[k], bool) or not 0 <= d[k] < 65536:
-                raise ValidationError("índice inválido no pagamento")
+                raise ValidationError("invalid index in the payment")
         if not isinstance(d["hops"], list) or not 1 <= len(d["hops"]) <= MAX_HOPS or not isinstance(d["proof"], dict):
-            raise ValidationError("cadeia de saltos inválida")
+            raise ValidationError("invalid chain of hops")
         return cls(d["proof"], d["slot"], tuple(Hop.from_dict(h) for h in d["hops"]), d["leaf"])
 
 
-# ---------------------------------------------------------------- construção (lado de quem paga)
+# ---------------------------------------------------------------- construction (payer's side)
 class SoftwareSigner:
-    """Chave em software (sem atestação): nível software."""
+    """Software key (no attestation): software level."""
 
     def __init__(self, keypair):
         self._kp = keypair
@@ -189,7 +189,7 @@ class SoftwareSigner:
 
 def make_hop(*, chain_hash: bytes, vault_id: str, input_note: bytes, input_value: int, outputs, request_id: bytes,
              signer) -> Hop:
-    """Monta e assina um salto. `signer`: KeyHandle de hardware ou SoftwareSigner (key_type, public_key, attestation, sign)."""
+    """Builds and signs a hop. `signer`: hardware KeyHandle or SoftwareSigner (key_type, public_key, attestation, sign)."""
     tx = OfflineTx(chain_hash, vault_id, input_note, input_value, tuple(outputs), request_id)
     return Hop(tx, signer.key_type, signer.public_key, signer.sign(tx.signing_message()), signer.attestation)
 
@@ -206,51 +206,51 @@ def spend_output(prev: Hop, index: int, *, outputs, request_id: bytes, signer) -
                     request_id=request_id, signer=signer)
 
 
-# ---------------------------------------------------------------- verificação de cadeia (consenso: note_claim)
+# ---------------------------------------------------------------- chain verification (consensus: note_claim)
 @dataclass(frozen=True)
 class ChainCheck:
-    """Resultado da verificação de uma cadeia de saltos até uma folha."""
+    """Result of verifying a chain of hops up to a leaf."""
     leaf: NoteOutput
-    leaf_id: bytes              # identificador da folha: child_note_id(txid do último salto, índice)
-    links: tuple                # ((nota_gasta_hex, txid_hex), ...) na ordem dos saltos
+    leaf_id: bytes              # leaf identifier: child_note_id(txid of the last hop, index)
+    links: tuple                # ((spent_note_hex, txid_hex), ...) in hop order
 
 
 def verify_hop_chain(hops, *, chain_hash: bytes, vault_id: str, slot: int, cap: int, root_key_type: str,
                      root_key_hex: str, leaf: int) -> ChainCheck:
-    """Verifica, de forma PURA e determinística, a cadeia raiz -> folha. Usada pelo consenso no `note_claim`.
+    """Verifies, in a PURE and deterministic way, the root -> leaf chain. Used by consensus in `note_claim`.
 
-    Exige: 1..MAX_HOPS saltos; saltos da rede/cofre certos; primeiro salto gasta a nota raiz da vaga (valor `cap`);
-    cada salto seguinte gasta uma saída-NOTA do anterior; conservação exata; dono = chave da vaga (1º) ou compromisso
-    de hash da saída-nota anterior; assinatura válida; folha = saída do último salto. Não decide o TIPO da folha.
+    Requires: 1..MAX_HOPS hops; hops from the right network/vault; the first hop spends the slot's root note (value `cap`);
+    each following hop spends a NOTE output of the previous one; exact conservation; owner = the slot's key (1st) or the hash
+    commitment of the previous note output; valid signature; leaf = output of the last hop. It does not decide the leaf's TYPE.
     """
     if not isinstance(hops, (tuple, list)) or not 1 <= len(hops) <= MAX_HOPS:
-        raise ValidationError("número de saltos fora do limite")
+        raise ValidationError("number of hops out of range")
     expected_note, expected_value, owner_commit = root_note_id(vault_id, slot), cap, None
     links = []
     for i, hop in enumerate(hops):
         tx = hop.tx
         if tx.chain_hash != chain_hash or tx.vault_id != vault_id:
-            raise ValidationError("salto de outra rede ou de outro cofre")
+            raise ValidationError("hop from another network or another vault")
         if tx.input_note != expected_note or tx.input_value != expected_value:
-            raise ValidationError("salto não gasta a nota esperada (cadeia quebrada ou valor diferente)")
+            raise ValidationError("hop does not spend the expected note (broken chain or different value)")
         if sum(o.value for o in tx.outputs) != tx.input_value:
-            raise ValidationError("valor não se conserva no salto")
+            raise ValidationError("value is not conserved in the hop")
         if i == 0:
             owner_ok = hop.key_type == root_key_type and hop.pubkey.hex() == root_key_hex
         else:
             owner_ok = owner_commitment(hop.key_type, hop.pubkey) == owner_commit
         if not owner_ok:
-            raise ValidationError("a chave que assinou não é a dona da nota gasta")
+            raise ValidationError("the key that signed is not the owner of the spent note")
         if not verify_device_signature(hop.key_type, hop.pubkey, hop.signature, tx.signing_message()):
-            raise ValidationError("assinatura do salto inválida")
+            raise ValidationError("invalid hop signature")
         links.append((tx.input_note.hex(), tx.txid.hex()))
         if i + 1 < len(hops):
             nxt = hops[i + 1].tx
             j = next((j for j in range(len(tx.outputs)) if child_note_id(tx.txid, j) == nxt.input_note), None)
             if j is None or tx.outputs[j].kind != KIND_NOTE or tx.outputs[j].value != nxt.input_value:
-                raise ValidationError("o próximo salto não gasta uma saída-nota do salto anterior")
+                raise ValidationError("the next hop does not spend a note output of the previous hop")
             expected_note, expected_value, owner_commit = nxt.input_note, nxt.input_value, tx.outputs[j].owner
     last = hops[-1].tx
     if not isinstance(leaf, int) or isinstance(leaf, bool) or not 0 <= leaf < len(last.outputs):
-        raise ValidationError("índice da folha fora do último salto")
+        raise ValidationError("leaf index outside the last hop")
     return ChainCheck(last.outputs[leaf], child_note_id(last.txid, leaf), tuple(links))

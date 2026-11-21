@@ -1,17 +1,17 @@
-"""Rede P2P sobre TCP (asyncio). Sem servidor central: cada nó fala com quem conhecer.
+"""P2P network over TCP (asyncio). No central server: each node talks to whoever it knows.
 
-Formato: 4 bytes (big-endian) com o tamanho + JSON UTF-8 `{"t": tipo, "d": dados}`.
-Mensagens: version, verack, ping, pong, getaddr, addr, inv, getdata, block, tx,
+Format: 4 bytes (big-endian) with the size + UTF-8 JSON `{"t": type, "d": data}`.
+Messages: version, verack, ping, pong, getaddr, addr, inv, getdata, block, tx,
 getblocks, blocks, getmempool.
 
-Defesas: tamanho máximo de mensagem (menor antes do handshake e por tipo), limite de taxa por peer
-(mensagens/s no total, por tipo e bytes/s), pontuação de mau comportamento com banimento temporário,
-limites de conexões (total e por IP), recuo exponencial ao reconectar, timeout de handshake e de
-inatividade, detecção de autoconexão e de conexão duplicada, verificação de chain_id/gênese.
+Defenses: maximum message size (smaller before the handshake and per type), per-peer rate limit
+(messages/s overall, per type and bytes/s), misbehavior scoring with temporary bans,
+connection limits (total and per IP), exponential backoff on reconnect, handshake and
+inactivity timeouts, detection of self-connection and duplicate connection, chain_id/genesis verification.
 
-Política de excesso: dicas (inv/addr/ping/pong) são descartadas; o resto é processado COM atraso e rende
-pontos de mau comportamento (descartar pedidos travaria a sincronização do par honesto, que não reenvia).
-`blocks` que NÓS pedimos (sync em andamento) não contam para o limite de bytes.
+Excess policy: hints (inv/addr/ping/pong) are dropped; everything else is processed WITH delay and earns
+misbehavior points (dropping requests would stall the honest peer's sync, which does not resend).
+`blocks` that WE requested (sync in progress) do not count toward the byte limit.
 """
 import asyncio
 import json
@@ -33,19 +33,19 @@ BAN_SCORE = 100
 HANDSHAKE_TIMEOUT = 10
 IDLE_TIMEOUT = 120
 PING_EVERY = 30
-MAX_PREHANDSHAKE_MESSAGE = 16 * 1024     # antes do handshake só cabe um `version`
-MAX_BY_TYPE = {                          # teto por tipo (bytes do JSON); tipos ausentes: MAX_MESSAGE
+MAX_PREHANDSHAKE_MESSAGE = 16 * 1024     # before the handshake only a `version` fits
+MAX_BY_TYPE = {                          # cap per type (JSON bytes); missing types: MAX_MESSAGE
     "version": 4 * 1024, "verack": 256, "ping": 256, "pong": 256, "getaddr": 256, "getmempool": 256,
     "addr": 64 * 1024, "inv": 256 * 1024, "getdata": 64 * 1024, "getblocks": 64 * 1024, "tx": 512 * 1024,
 }
-PER_TYPE = {                             # (mensagens/s sustentadas, rajada) por tipo
+PER_TYPE = {                             # (sustained messages/s, burst) per type
     "getblocks": (4, 20), "getdata": (20, 100), "getmempool": (0.5, 3), "getaddr": (0.2, 3), "addr": (1, 5),
     "inv": (30, 150), "block": (20, 200), "tx": (60, 300), "ping": (2, 10), "pong": (2, 10),
 }
 HINTS = frozenset({"inv", "addr", "ping", "pong"})
 MSGS_PER_SEC, MSGS_BURST = 100, 300
 BYTES_PER_SEC, BYTES_BURST = 4 * 1024 * 1024, 16 * 1024 * 1024
-MAX_PER_IP = 8                           # conexões de entrada por IP (loopback isento por padrão)
+MAX_PER_IP = 8                           # inbound connections per IP (loopback exempt by default)
 RECONNECT_BASE, RECONNECT_MAX, MAX_FAILS = 5, 300, 12
 _TYPE_RX = re.compile(rb'^\{"t":"([a-z]{1,16})"')
 
@@ -59,8 +59,8 @@ class Peer:
     def __init__(self, p2p, reader, writer, outbound: bool, addr):
         self.p2p, self.reader, self.writer = p2p, reader, writer
         self.outbound = outbound
-        self.addr = addr                    # (host, port) como visto por nós
-        self.listen_port = 0                # porta anunciada pelo peer
+        self.addr = addr                    # (host, port) as seen by us
+        self.listen_port = 0                # port announced by the peer
         self.node_id = None
         self.ready = False
         self.score = 0.0
@@ -71,7 +71,7 @@ class Peer:
         self._msgs = TokenBucket(MSGS_PER_SEC, MSGS_BURST)
         self._bytes = TokenBucket(BYTES_PER_SEC, BYTES_BURST)
         self._typed: dict = {}
-        self.known: set = set()             # hashes/txids que o peer já conhece
+        self.known: set = set()             # hashes/txids the peer already knows
         self.requested: set = set()
         self.closed = False
         self.sync_inflight = False
@@ -89,14 +89,14 @@ class Peer:
             self.writer.write(len(raw).to_bytes(4, "big") + raw)
             await asyncio.wait_for(self.writer.drain(), 10)
         except Exception as e:
-            self.p2p.log(f"{self}: falha ao enviar '{t}': {type(e).__name__}", "debug")
+            self.p2p.log(f"{self}: failed to send '{t}': {type(e).__name__}", "debug")
             self.close()
 
     def misbehave(self, points: int, why: str):
-        now = time.time()                                   # a pontuação decai: 1 ponto a cada 5 s
+        now = time.time()                                   # the score decays: 1 point every 5 s
         self.score = max(0.0, self.score - (now - self._score_at) / 5) + points
         self._score_at = now
-        self.p2p.log(f"{self}: mau comportamento +{points} ({why}) => {self.score:.0f}", "debug")
+        self.p2p.log(f"{self}: misbehavior +{points} ({why}) => {self.score:.0f}", "debug")
         if self.score >= BAN_SCORE:
             self.p2p.ban(self.addr[0])
             self.close()
@@ -105,7 +105,7 @@ class Peer:
         return self._msgs.allow()
 
     def rate_check(self, t: str, n: int, solicited: bool = False) -> str:
-        """"ok" | "drop" (dica em excesso: descarta) | "slow" (processa com atraso e pontua)."""
+        """"ok" | "drop" (excess hint: dropped) | "slow" (processed with delay and scored)."""
         ok = self._msgs.allow()
         spec = PER_TYPE.get(t)
         if spec:
@@ -135,10 +135,10 @@ class P2P:
         self.host, self.port = host, port
         self.max_outbound, self.max_inbound = max_outbound, max_inbound
         self.max_per_ip, self.exempt_loopback = max_per_ip, exempt_loopback
-        self._fails: dict[tuple, int] = {}                # falhas seguidas de conexão por endereço (recuo)
+        self._fails: dict[tuple, int] = {}                # consecutive connection failures per address (backoff)
         self.peers: list[Peer] = []
         self.node_id = os.urandom(8).hex()
-        self.known_addrs: dict[tuple, float] = {}      # (host, port) -> última tentativa
+        self.known_addrs: dict[tuple, float] = {}      # (host, port) -> last attempt
         self.seeds = [self._parse(s) for s in seeds]
         self.bans: dict[str, float] = {}
         self.peers_file = peers_file
@@ -163,7 +163,7 @@ class P2P:
                 for a in json.load(open(self.peers_file)):
                     self.known_addrs.setdefault(self._parse(a), 0)
             except Exception as e:
-                self.log(f"peers.json ilegível, ignorado ({type(e).__name__})", "warning")
+                self.log(f"peers.json unreadable, ignored ({type(e).__name__})", "warning")
 
     def _save_peers(self):
         if self.peers_file:
@@ -172,11 +172,11 @@ class P2P:
                 json.dump([f"{h}:{p}" for h, p in list(self.known_addrs)[:1000]], open(tmp, "w"))
                 os.replace(tmp, self.peers_file)
             except Exception as e:
-                self.log(f"não foi possível gravar peers.json ({type(e).__name__})", "warning")
+                self.log(f"could not write peers.json ({type(e).__name__})", "warning")
 
     def ban(self, host: str, seconds: int = 3600):
         self.bans[host] = time.time() + seconds
-        self.log(f"banido {host} por {seconds}s", "warning")
+        self.log(f"banned {host} for {seconds}s", "warning")
 
     def is_banned(self, host: str) -> bool:
         t = self.bans.get(host)
@@ -190,7 +190,7 @@ class P2P:
     def ready_peers(self):
         return [p for p in self.peers if p.ready and not p.closed]
 
-    # ---------- ciclo de vida ----------
+    # ---------- lifecycle ----------
     async def start(self):
         self._server = await asyncio.start_server(self._on_inbound, self.host, self.port)
         self.port = self._server.sockets[0].getsockname()[1]
@@ -209,7 +209,7 @@ class P2P:
         self._save_peers()
 
     def _retry_delay(self, addr) -> float:
-        """Recuo exponencial: 5 s, 10 s, 20 s... até 5 min, por endereço que falha seguidamente."""
+        """Exponential backoff: 5 s, 10 s, 20 s... up to 5 min, per address that keeps failing."""
         f = self._fails.get(addr, 0)
         return RECONNECT_BASE * 2 ** max(0, f - 1) if f else RECONNECT_BASE
     _retry_delay_max = RECONNECT_MAX
@@ -231,8 +231,8 @@ class P2P:
                 await asyncio.sleep(1)
             except asyncio.CancelledError:
                 return
-            except Exception as e:                       # um erro aqui não pode matar a descoberta de peers
-                self.log(f"erro no laço de conexões: {exc_label(e)}", "error")
+            except Exception as e:                       # an error here must not kill peer discovery
+                self.log(f"error in the connection loop: {exc_label(e)}", "error")
                 await asyncio.sleep(5)
 
     async def _ping_loop(self):
@@ -248,14 +248,14 @@ class P2P:
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                self.log(f"erro no laço de ping: {exc_label(e)}", "error")
+                self.log(f"error in the ping loop: {exc_label(e)}", "error")
 
     def _note_failure(self, addr) -> None:
         f = self._fails[addr] = self._fails.get(addr, 0) + 1
-        if f >= MAX_FAILS and addr not in self.seeds:     # endereço morto: esquece (seeds nunca)
+        if f >= MAX_FAILS and addr not in self.seeds:     # dead address: forget it (never seeds)
             self.known_addrs.pop(addr, None)
             self._fails.pop(addr, None)
-            self.log(f"esquecendo {addr[0]}:{addr[1]} após {f} falhas", "debug")
+            self.log(f"forgetting {addr[0]}:{addr[1]} after {f} failures", "debug")
 
     async def connect(self, addr):
         if self.is_banned(addr[0]):
@@ -264,7 +264,7 @@ class P2P:
             r, w = await asyncio.wait_for(asyncio.open_connection(*addr), 5)
         except Exception as e:
             self._note_failure(addr)
-            self.log(f"falha ao conectar em {addr[0]}:{addr[1]}: {type(e).__name__}", "debug")
+            self.log(f"failed to connect to {addr[0]}:{addr[1]}: {type(e).__name__}", "debug")
             return None
         peer = Peer(self, r, w, True, addr)
         await self._run_peer(peer)
@@ -280,12 +280,12 @@ class P2P:
         same_ip = sum(1 for p in inbound if p.addr[0] == host)
         if (self.is_banned(host) or len(inbound) >= self.max_inbound
                 or (same_ip >= self.max_per_ip and not (loopback and self.exempt_loopback))):
-            self.log(f"conexão de entrada recusada de {host} (banido/lotado/limite por IP)", "debug")
+            self.log(f"inbound connection refused from {host} (banned/full/per-IP limit)", "debug")
             writer.close()
             return
         await self._run_peer(Peer(self, reader, writer, False, (host, port)))
 
-    # ---------- laço do peer ----------
+    # ---------- peer loop ----------
     async def _run_peer(self, peer: Peer):
         self.peers.append(peer)
         try:
@@ -295,13 +295,13 @@ class P2P:
                 hdr = await asyncio.wait_for(peer.reader.readexactly(4), timeout)
                 n = int.from_bytes(hdr, "big")
                 if n == 0 or n > (MAX_MESSAGE if peer.ready else MAX_PREHANDSHAKE_MESSAGE):
-                    peer.misbehave(100, "tamanho de mensagem inválido")
+                    peer.misbehave(100, "invalid message size")
                     break
                 raw = await asyncio.wait_for(peer.reader.readexactly(n), 30)
                 peer.last_recv = time.time()
                 hint = _peek_type(raw)
-                if hint is not None and n > MAX_BY_TYPE.get(hint, MAX_MESSAGE):   # barra antes de analisar o JSON
-                    peer.misbehave(50, f"mensagem grande demais para o tipo ({n} bytes)")
+                if hint is not None and n > MAX_BY_TYPE.get(hint, MAX_MESSAGE):   # blocks it before parsing the JSON
+                    peer.misbehave(50, f"message too large for the type ({n} bytes)")
                     continue
                 try:
                     msg = json.loads(raw)
@@ -309,24 +309,24 @@ class P2P:
                     if not isinstance(t, str):
                         raise ValueError
                 except Exception:
-                    peer.misbehave(20, "mensagem malformada")
+                    peer.misbehave(20, "malformed message")
                     continue
                 if n > MAX_BY_TYPE.get(t, MAX_MESSAGE):
-                    peer.misbehave(50, f"mensagem grande demais para o tipo ({n} bytes)")
+                    peer.misbehave(50, f"message too large for the type ({n} bytes)")
                     continue
                 verdict = peer.rate_check(t, n, solicited=(t == "blocks" and peer.sync_inflight))
                 if verdict == "drop":
-                    continue                                  # dicas: descartar rajadas é seguro
+                    continue                                  # hints: dropping bursts is safe
                 if verdict == "slow":
-                    peer.misbehave(1, "excesso de mensagens/bytes")
-                    await asyncio.sleep(0.25)                 # contrapressão: processa, mas devagar
+                    peer.misbehave(1, "excess messages/bytes")
+                    await asyncio.sleep(0.25)                 # backpressure: processes, but slowly
                 await self._dispatch(peer, t, d)
         except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, OSError):
             pass
         except asyncio.CancelledError:
             raise
-        except Exception as e:                      # nunca derrubar o nó por um peer
-            self.log(f"{peer}: erro interno {exc_label(e)}", "error")
+        except Exception as e:                      # never bring the node down because of a peer
+            self.log(f"{peer}: internal error {exc_label(e)}", "error")
         finally:
             peer.close()
             if peer in self.peers:
@@ -343,7 +343,7 @@ class P2P:
                 peer.ready = True
                 await self._after_handshake(peer)
                 return
-            peer.misbehave(50, "mensagem antes do handshake")
+            peer.misbehave(50, "message before the handshake")
             return
         if t == "ping":
             await peer.send("pong", d)
@@ -360,7 +360,7 @@ class P2P:
                         if 0 < pa[1] < 65536 and len(self.known_addrs) < 2000:
                             self.known_addrs.setdefault(pa, 0)
                     except Exception:
-                        peer.misbehave(5, "addr inválido")
+                        peer.misbehave(5, "invalid addr")
                 self._save_peers()
         elif t == "inv":
             await self._on_inv(peer, d)
@@ -379,7 +379,7 @@ class P2P:
             if ids:
                 await peer.send("inv", {"blocks": [], "txs": ids})
         else:
-            peer.misbehave(10, f"mensagem desconhecida {t[:20]}")
+            peer.misbehave(10, f"unknown message {t[:20]}")
 
     async def _on_version(self, peer: Peer, d):
         node = self.node
@@ -390,14 +390,14 @@ class P2P:
         except Exception:
             ok = False
         if not ok:
-            peer.misbehave(100, "versão/rede incompatível")
+            peer.misbehave(100, "incompatible version/network")
             return
         if d["nonce"] == self.node_id:
-            peer.close()                      # conectou em si mesmo
+            peer.close()                      # connected to itself
             self.known_addrs.pop(peer.addr, None)
             return
         if any(p is not peer and p.node_id == d["nonce"] and not p.closed for p in self.peers):
-            peer.close()                      # já conectado a este nó
+            peer.close()                      # already connected to this node
             return
         peer.node_id = d["nonce"]
         peer.height = int(d.get("height", 0)) if isinstance(d.get("height", 0), int) else 0
@@ -413,8 +413,8 @@ class P2P:
 
     async def _after_handshake(self, peer: Peer):
         self._fails.pop(peer.addr, None)
-        self.log(f"peer pronto {peer.addr[0]}:{peer.addr[1]} ({'saída' if peer.outbound else 'entrada'}), "
-                 f"altura {peer.height}", "info")
+        self.log(f"peer ready {peer.addr[0]}:{peer.addr[1]} ({'outbound' if peer.outbound else 'inbound'}), "
+                 f"height {peer.height}", "info")
         await peer.send("getaddr")
         await peer.send("getmempool")
         await self.node.maybe_sync(peer)
@@ -422,10 +422,10 @@ class P2P:
     async def _on_inv(self, peer: Peer, d):
         node = self.node
         if not isinstance(d, dict):
-            return peer.misbehave(10, "inv inválido")
+            return peer.misbehave(10, "invalid inv")
         blocks, txs = d.get("blocks", []), d.get("txs", [])
         if not isinstance(blocks, list) or not isinstance(txs, list) or len(blocks) + len(txs) > MAX_INV:
-            return peer.misbehave(20, "inv grande demais")
+            return peer.misbehave(20, "inv too large")
         want_b = [h for h in blocks if isinstance(h, str) and len(h) == 64 and not node.knows_block(h)]
         want_t = [h for h in txs if isinstance(h, str) and len(h) == 64 and not node.knows_tx(h)]
         for h in blocks + txs:
@@ -437,7 +437,7 @@ class P2P:
     async def _on_getdata(self, peer: Peer, d):
         node = self.node
         if not isinstance(d, dict):
-            return peer.misbehave(10, "getdata inválido")
+            return peer.misbehave(10, "invalid getdata")
         for h in list(d.get("blocks", []))[:MAX_GETDATA]:
             b = node.chain.get_any_block(h) if isinstance(h, str) else None
             if b is not None:
@@ -449,7 +449,7 @@ class P2P:
 
     async def _on_getblocks(self, peer: Peer, d):
         if not isinstance(d, dict) or not isinstance(d.get("locator"), list):
-            return peer.misbehave(10, "getblocks inválido")
+            return peer.misbehave(10, "invalid getblocks")
         chain = self.node.chain
         blocks, size = [], 0
         more = False
@@ -464,7 +464,7 @@ class P2P:
             more = bool(blocks) and blocks[-1].height < chain.height
         await peer.send("blocks", {"blocks": [b.to_dict() for b in blocks], "more": more})
 
-    # ---------- difusão ----------
+    # ---------- broadcast ----------
     async def broadcast_inv(self, blocks=(), txs=(), exclude=None):
         for p in self.ready_peers():
             if p is exclude:

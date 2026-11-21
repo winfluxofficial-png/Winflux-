@@ -1,64 +1,64 @@
-# Plano de testes — Winflux 0.1.0rc1 (testnet)
+# Test plan — Winflux 0.1.0rc1 (testnet)
 
-Objetivo: dar a quem vai testar um roteiro claro do que já está automatizado, o que precisa de olho humano e o que
-**ainda não dá para testar**. Use uma máquina limpa; nada aqui deve ser feito com dinheiro real.
+Goal: give whoever is going to test a clear script of what is already automated, what needs human eyes and what
+**cannot be tested yet**. Use a clean machine; nothing here should be done with real money.
 
-## 0. Portões automáticos (devem passar antes de qualquer teste manual)
+## 0. Automatic gates (must pass before any manual test)
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # suíte completa (≈20 s)
-WINFLUX_SMOKE=1 python -m pytest tests/test_localnet_smoke.py -q     # 5 processos reais (≈1 min)
-PYTHONPATH=. python scripts/smoke_test.py             # o mesmo, com saída passo a passo
+python -m pytest -q                                   # full suite (≈20 s)
+WINFLUX_SMOKE=1 python -m pytest tests/test_localnet_smoke.py -q     # 5 real processes (≈1 min)
+PYTHONPATH=. python scripts/smoke_test.py             # the same, with step-by-step output
 ```
-Critério: 0 falhas; `5/5 passos OK`. Se falhar, guarde a saída e os logs (`--keep` preserva `logs/`).
+Criterion: 0 failures; `5/5 steps OK`. If it fails, keep the output and the logs (`--keep` preserves `logs/`).
 
-## 1. Rede local (1 máquina)
+## 1. Local network (1 machine)
 `PYTHONPATH=. python scripts/run_local_testnet.py --dir local-testnet --block-time 4`
 
-| # | O que fazer | Esperado |
+| # | What to do | Expected |
 |---|---|---|
-| 1.1 | `curl :18080/api/status` em cada nó | mesma `chain_id`, `peers ≥ 1`, `height` crescendo, `version` = 0.1.0rc1 |
-| 1.2 | Matar um nó (`kill`) e religá-lo com o mesmo `--datadir` | volta na altura anterior e recupera os blocos perdidos |
-| 1.3 | Parar o minerador por 1 min e religar | rede segue; minerador retoma sem reorg inesperado |
-| 1.4 | Enviar tx pela CLI a um nó não-minerador | aparece no mempool dos outros e é minerada; saldo bate em todos |
-| 1.5 | Enviar a mesma tx duas vezes / gastar a mesma moeda em duas txs | segunda é recusada (400) |
-| 1.6 | Reiniciar tudo com `--keep` | cadeia retomada, saldos iguais |
+| 1.1 | `curl :18080/api/status` on each node | same `chain_id`, `peers ≥ 1`, `height` growing, `version` = 0.1.0rc1 |
+| 1.2 | Kill a node (`kill`) and bring it back with the same `--datadir` | returns at the previous height and recovers the missed blocks |
+| 1.3 | Stop the miner for 1 min and restart it | the network keeps going; the miner resumes without an unexpected reorg |
+| 1.4 | Send a tx via the CLI to a non-mining node | shows up in the others' mempool and is mined; balance matches on all |
+| 1.5 | Send the same tx twice / spend the same coin in two txs | the second is refused (400) |
+| 1.6 | Restart everything with `--keep` | chain resumed, balances equal |
 
-## 2. Várias máquinas (rede real)
-Mesmo gênese em todas (conferir `chain_id`), `--seed` apontando para 2+ nós de operadores diferentes, porta P2P aberta.
-Verifique convergência de topo (`tip`) e de `supply`; derrube um seed e confirme que os demais seguem conectados;
-inicie um nó novo do zero e confirme que sincroniza a cadeia inteira. **Não testado ainda:** latência alta, NAT, IPv6.
+## 2. Several machines (real network)
+Same genesis on all (check the `chain_id`), `--seed` pointing to 2+ nodes from different operators, P2P port open.
+Check convergence of the tip (`tip`) and of `supply`; take down a seed and confirm the others stay connected;
+start a new node from scratch and confirm it syncs the whole chain. **Not tested yet:** high latency, NAT, IPv6.
 
-## 3. Resistência a abuso (com cuidado, só na sua rede)
-| # | Ataque simulado | Esperado |
+## 3. Abuse resistance (carefully, only on your own network)
+| # | Simulated attack | Expected |
 |---|---|---|
-| 3.1 | 1000 `GET /api/status` em rajada do mesmo IP | `429` com `Retry-After` depois da rajada; nó segue normal |
-| 3.2 | `POST /api/tx` com corpo de 5 MB, Content-Length falso, JSON inválido | `413`/`400`, nunca `500`; sem custo de memória perceptível |
-| 3.3 | Abrir 100 conexões ociosas na API | `503` acima do limite por IP; ociosas caem em ≤ 20 s (`408`) |
-| 3.4 | Cliente P2P cru enviando lixo / mensagem de 1 MB antes do handshake | desconectado e banido (`banido <ip>` no log) |
-| 3.5 | Enxurrada de `ping`/`inv` | descartados sem derrubar o nó |
-| 3.6 | Ler os logs após 3.1–3.5 | nenhum corpo de mensagem, nenhuma chave/senha |
-Para 3.x: scripts de exemplo estão em `tests/test_hardening.py` (os mesmos cenários, automatizados).
+| 3.1 | 1000 `GET /api/status` in a burst from the same IP | `429` with `Retry-After` after the burst; node keeps working |
+| 3.2 | `POST /api/tx` with a 5 MB body, fake Content-Length, invalid JSON | `413`/`400`, never `500`; no noticeable memory cost |
+| 3.3 | Open 100 idle connections on the API | `503` above the per-IP limit; idle ones drop within ≤ 20 s (`408`) |
+| 3.4 | Raw P2P client sending garbage / a 1 MB message before the handshake | disconnected and banned (`banned <ip>` in the log) |
+| 3.5 | Flood of `ping`/`inv` | dropped without bringing the node down |
+| 3.6 | Read the logs after 3.1–3.5 | no message body, no key/password |
+For 3.x: example scripts are in `tests/test_hardening.py` (the same scenarios, automated).
 
-## 4. Carteira
-Criar, anotar a chave de recuperação, apagar o keystore, **restaurar** com `recover`, conferir que saldo e endereços
-voltam; enviar com troco; enviar mais do que o saldo (erro claro); enviar para endereço inválido (erro claro). No app
-Android: compilar no Android Studio (a UI **ainda não foi compilada**), criar/restaurar/enviar contra um nó local.
+## 4. Wallet
+Create, write down the recovery key, delete the keystore, **restore** with `recover`, check that balance and addresses
+come back; send with change; send more than the balance (clear error); send to an invalid address (clear error). In the
+Android app: build in Android Studio (the UI **has not been compiled yet**), create/restore/send against a local node.
 
-## 5. Pagamentos offline
-| # | Cenário | Como | Esperado |
+## 5. Offline payments
+| # | Scenario | How | Expected |
 |---|---|---|---|
-| 5.1 | Caminho feliz | `scripts/smoke_test.py` (passo 5) ou `scripts/demo_note_claim.py` | cofre aberto, nota Bob→Carol liquidada, saldo de Carol = valor − taxa |
-| 5.2 | Gasto duplo | `scripts/demo_note_claim.py` | 2º ramo pago pelo colateral; cofre marcado `fraud` |
-| 5.3 | Reconciliação | `winflux.cli … reconcile <vault_id> --journal vault-journal.json` | estados por vaga e avisos coerentes |
-| 5.4 | Reapresentar a mesma cadeia | enviar o `note_claim` de novo | recusado (`já liquidada`) |
-| 5.5 | **Reembolso após o prazo** | `vault-refund` | **só automatizado em testes unitários.** Ao vivo exige esperar `vault_ttl_min` (≥ 1 dia) + `claim_window` (7 dias) em tempo real, qualquer que seja o tempo de bloco (os prazos são `DAY // block_time`). Para testá-lo ao vivo é preciso um gênese com prazos curtos (decisão de projeto, fora desta versão). |
+| 5.1 | Happy path | `scripts/smoke_test.py` (step 5) or `scripts/demo_note_claim.py` | vault opened, Bob→Carol note settled, Carol's balance = value − fee |
+| 5.2 | Double spend | `scripts/demo_note_claim.py` | 2nd branch paid by the collateral; vault marked `fraud` |
+| 5.3 | Reconciliation | `winflux.cli … reconcile <vault_id> --journal vault-journal.json` | states per slot and coherent warnings |
+| 5.4 | Resubmit the same chain | send the `note_claim` again | refused (`already settled`) |
+| 5.5 | **Refund after the deadline** | `vault-refund` | **only automated in unit tests.** Live it requires waiting `vault_ttl_min` (≥ 1 day) + `claim_window` (7 days) in real time, whatever the block time (the deadlines are `DAY // block_time`). To test it live a genesis with short deadlines is needed (a design decision, outside this version). |
 
-## 6. O que NÃO está coberto nesta versão
-Atestação de hardware real, NFC/BLE, PWA, histórico por endereço, TLS nativo, proteção contra eclipse/Sybil, testes
-de longa duração (dias), carga com milhares de txs/s, auditoria externa, UI Android compilada. Veja
-`docs/security-assumptions.md` e `docs/testnet.md`.
+## 6. What is NOT covered in this version
+Real hardware attestation, NFC/BLE, PWA, per-address history, native TLS, eclipse/Sybil protection, long-running
+tests (days), load with thousands of txs/s, external audit, compiled Android UI. See
+`docs/security-assumptions.md` and `docs/testnet.md`.
 
-## 7. Como relatar
-Versão (`/api/status` → `version`), `chain_id`, `--log-level debug` do trecho relevante, passos para reproduzir.
-Vulnerabilidades: em privado (ver `docs/testnet.md`).
+## 7. How to report
+Version (`/api/status` → `version`), `chain_id`, `--log-level debug` of the relevant excerpt, steps to reproduce.
+Vulnerabilities: privately (see `docs/testnet.md`).

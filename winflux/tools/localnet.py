@@ -1,11 +1,11 @@
-"""Testnet local: N nós conectados + 1 minerador, cada um num processo, a partir de um gênese gerado com `netgen`.
+"""Local testnet: N connected nodes + 1 miner, each in its own process, from a genesis generated with `netgen`.
 
     python scripts/run_local_testnet.py --dir local-testnet
 
-Usado também por `scripts/smoke_test.py`. SOMENTE para testes locais: a carteira do minerador usa uma senha
-padrão de devnet (ou WINFLUX_DEVNET_PASSWORD) e as portas escutam em 127.0.0.1. Não altera regras de consenso nem
-parâmetros monetários: o gênese vem de `netgen.make_genesis`; só a dificuldade inicial (calibrada para o `block_time`
-pedido) e a maturidade (2 blocos) são ajustadas, ambas expostas pelo próprio netgen.
+Also used by `scripts/smoke_test.py`. For LOCAL tests ONLY: the miner's wallet uses a default devnet password
+(or WINFLUX_DEVNET_PASSWORD) and the ports listen on 127.0.0.1. It does not change consensus rules or
+monetary parameters: the genesis comes from `netgen.make_genesis`; only the initial difficulty (calibrated for the requested
+`block_time`) and the maturity (2 blocks) are adjusted, both exposed by netgen itself.
 """
 import json
 import os
@@ -23,17 +23,17 @@ from ..wallet.hd import HDWallet
 from ..wallet.wallet import Wallet
 from .netgen import make_genesis
 
-DEFAULT_PASSWORD = "devnet-only-password"           # SOMENTE testes locais
+DEFAULT_PASSWORD = "devnet-only-password"           # LOCAL tests ONLY
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def measure_hashrate(seconds_of_work: int = 150_000) -> float:
-    """Hashes/s de UMA thread de mineração (o que o nó usa), medido sobre um bloco real."""
-    cfg = make_genesis("calibragem", block_time=60, initial_hashes=2**40)
+    """Hashes/s of ONE mining thread (what the node uses), measured on a real block."""
+    cfg = make_genesis("calibration", block_time=60, initial_hashes=2**40)
     chain = Chain(cfg, ProofOfWork())
     blk = chain.create_block("", _dummy_address(), [], timestamp=cfg.timestamp + 1)
     t = time.perf_counter()
-    ProofOfWork.search(blk, 0, 0, seconds_of_work)            # alvo 0: nunca acha, varre tudo
+    ProofOfWork.search(blk, 0, 0, seconds_of_work)            # target 0: never finds one, sweeps everything
     return seconds_of_work / (time.perf_counter() - t)
 
 
@@ -80,7 +80,7 @@ class LocalTestnet:
         self.wallet_path = os.path.join(self.dir, "miner.wallet.json")
         self.miner_address = ""
 
-    # ---------- preparo ----------
+    # ---------- setup ----------
     def prepare(self, fresh: bool = True) -> None:
         if fresh and os.path.isdir(self.dir):
             shutil.rmtree(self.dir)
@@ -90,9 +90,9 @@ class LocalTestnet:
         else:
             wallet = Wallet.create()
             wallet.save(self.wallet_path, self.password)
-        self.miner_address = HDWallet.from_wallet(wallet).address(0)   # o mesmo que `cli balance` enxerga
+        self.miner_address = HDWallet.from_wallet(wallet).address(0)   # the same one `cli balance` sees
         if not os.path.exists(self.genesis_path):
-            hashes = max(16, int(measure_hashrate() * self.block_time))   # ~block_time s por bloco com 1 minerador
+            hashes = max(16, int(measure_hashrate() * self.block_time))   # ~block_time s per block with 1 miner
             cfg = make_genesis("local", block_time=self.block_time, initial_hashes=hashes, maturity=self.maturity)
             save_genesis_config(cfg, self.genesis_path)
         self.config = load_genesis_config(self.genesis_path)
@@ -101,7 +101,7 @@ class LocalTestnet:
     def chain_id(self) -> str:
         return self.config.params.chain_id
 
-    # ---------- processos ----------
+    # ---------- processes ----------
     def _spawn(self, node: NodeProc, seeds: list[str]) -> None:
         cmd = [sys.executable, "-u", "-m", "winflux.node.main", "--genesis", self.genesis_path,
                "--datadir", node.datadir, "--listen", f"127.0.0.1:{node.p2p_port}",
@@ -125,7 +125,7 @@ class LocalTestnet:
     def start(self, timeout: float = 60) -> None:
         for i in range(self.n_nodes):
             self.add_node(f"node{i}")
-        self.add_node("miner", mine=True)            # o minerador também é um nó completo, ligado aos demais
+        self.add_node("miner", mine=True)            # the miner is also a full node, connected to the others
         self.wait_ready(timeout)
 
     def wait_ready(self, timeout: float = 60) -> None:
@@ -134,7 +134,7 @@ class LocalTestnet:
         while pending and time.time() < deadline:
             for n in list(pending):
                 if not n.alive():
-                    raise RuntimeError(f"{n.name} encerrou ao iniciar (veja {n.log_path}):\n{self.tail(n)}")
+                    raise RuntimeError(f"{n.name} exited on startup (see {n.log_path}):\n{self.tail(n)}")
                 try:
                     n.status()
                     pending.remove(n)
@@ -142,7 +142,7 @@ class LocalTestnet:
                     pass
             time.sleep(0.3)
         if pending:
-            raise RuntimeError("nós não responderam a tempo: " + ", ".join(n.name for n in pending))
+            raise RuntimeError("nodes did not respond in time: " + ", ".join(n.name for n in pending))
 
     def tail(self, node: NodeProc, lines: int = 15) -> str:
         try:

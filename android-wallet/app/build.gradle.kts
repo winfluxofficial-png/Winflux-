@@ -32,7 +32,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")   // Ed25519 (API 26+; o JDK do Android só tem a partir da 33)
-    implementation("com.google.zxing:core:3.5.3")              // gera o QR do endereço
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")   // Ed25519 (API 26+; Android's JDK only has it from 33 on)
+    implementation("com.google.zxing:core:3.5.3")              // generates the address QR code
     testImplementation("junit:junit:4.13.2")
 }

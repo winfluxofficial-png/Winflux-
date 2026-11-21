@@ -1,4 +1,4 @@
-"""A2: simulador de hardware e verificação de atestação."""
+"""A2: hardware simulator and attestation verification."""
 import copy
 import random
 
@@ -41,15 +41,15 @@ def test_single_use_not_requested_is_not_hardware():
     assert r.level == "tee" and not r.single_use and not r.is_hardware
 
 
-# ------------------------------------------------------------------ propriedades do hardware
+# ------------------------------------------------------------------ hardware properties
 def test_single_use_key_is_deleted_after_one_signature():
     _, hw = make()
     a, b = hw.generate_key("p256", b"\x01" * 16), hw.generate_key("ed25519", b"\x02" * 16)
     assert hw.has_key(a.handle) and a.sign(b"m1")
     assert not hw.has_key(a.handle)
-    with pytest.raises(HardwareError, match="já usada"):
-        a.sign(b"m2")                                        # segunda assinatura com a mesma chave
-    assert b.sign(b"x") and hw.has_key(b.handle) is False     # outras chaves seguem independentes
+    with pytest.raises(HardwareError, match="already used"):
+        a.sign(b"m2")                                        # second signature with the same key
+    assert b.sign(b"x") and hw.has_key(b.handle) is False     # other keys stay independent
 
 
 def test_multi_use_key_allowed_when_not_single_use():
@@ -62,7 +62,7 @@ def test_multi_use_key_allowed_when_not_single_use():
 def test_key_is_not_exportable_or_copyable():
     _, hw = make()
     h = hw.generate_key("p256", b"\x01" * 16)
-    with pytest.raises(HardwareError, match="exportável"):
+    with pytest.raises(HardwareError, match="exportable"):
         hw.export_key(h.handle)
     for fn in (copy.copy, copy.deepcopy):
         with pytest.raises(HardwareError):
@@ -76,7 +76,7 @@ def test_cloned_app_state_cannot_sign_on_another_device():
     root, hw_a = make()
     hw_b = root.provision("strongbox", not_before=NOW - 100, not_after=NOW + 10**6, seed=b"\x99" * 32)
     h = hw_a.generate_key("p256", b"\x01" * 16)
-    clone = type(h)(hw_b, h.handle, h.key_type, h.public_key, h.attestation)   # app copiado para outro aparelho
+    clone = type(h)(hw_b, h.handle, h.key_type, h.public_key, h.attestation)   # app copied to another device
     with pytest.raises(HardwareError):
         clone.sign(b"m")
 
@@ -84,11 +84,11 @@ def test_cloned_app_state_cannot_sign_on_another_device():
 def test_restoring_an_app_backup_does_not_resurrect_a_used_key():
     _, hw = make()
     h = hw.generate_key("p256", b"\x01" * 16)
-    backup = (h.handle, h.public_key, h.attestation)          # "backup" do estado do aplicativo
-    h.sign(b"gasto")
+    backup = (h.handle, h.public_key, h.attestation)          # "backup" of the app state
+    h.sign(b"spent")
     restored = type(h)(hw, backup[0], "p256", backup[1], backup[2])
     with pytest.raises(HardwareError):
-        restored.sign(b"gasto-de-novo")                       # o hardware já apagou a chave
+        restored.sign(b"spent-again")                       # the hardware has already erased the key
 
 
 def test_broken_hardware_models_the_adversary():
@@ -96,29 +96,29 @@ def test_broken_hardware_models_the_adversary():
     h = hw.generate_key("p256", b"\x01" * 16)
     hw.break_single_use()
     s1, s2 = h.sign(b"a"), h.sign(b"b")
-    assert s1 != s2 and hw.has_key(h.handle)                  # a atestação ainda "diz" uso único: risco residual (H1)
+    assert s1 != s2 and hw.has_key(h.handle)                  # the attestation still "says" single use: residual risk (H1)
 
 
-# ------------------------------------------------------------------ verificação da atestação
+# ------------------------------------------------------------------ attestation verification
 def test_untrusted_wrong_expired_revoked_and_mismatches():
     root, hw = make()
     h = hw.generate_key("p256", b"\x01" * 16)
     att = h.attestation
-    with pytest.raises(ValidationError, match="não confiável"):
+    with pytest.raises(ValidationError, match="untrusted"):
         verify_attestation(att, roots=[SimulatedRoot(seed=b"\x01" * 32).public_key], now=NOW)
-    with pytest.raises(ValidationError, match="validade"):
-        check(att, root, now=NOW + 10**7)                       # certificado do dispositivo expirado
-    with pytest.raises(ValidationError, match="validade"):
-        check(att, root, now=NOW - 10**6)                       # ainda não válido
+    with pytest.raises(ValidationError, match="validity"):
+        check(att, root, now=NOW + 10**7)                       # expired device certificate
+    with pytest.raises(ValidationError, match="validity"):
+        check(att, root, now=NOW - 10**6)                       # not yet valid
     from winflux.crypto.hashing import sha256
     dev_id = sha256(bytes.fromhex(att["device"]["device_pubkey"])).hex()
-    with pytest.raises(ValidationError, match="revogado"):
+    with pytest.raises(ValidationError, match="revoked"):
         check(att, root, revoked={dev_id})
-    with pytest.raises(ValidationError, match="outra chave"):
+    with pytest.raises(ValidationError, match="another key"):
         check(att, root, expect_pubkey="00" * 33)
-    with pytest.raises(ValidationError, match="outro tipo"):
+    with pytest.raises(ValidationError, match="another key type"):
         check(att, root, expect_key_type="ed25519")
-    with pytest.raises(ValidationError, match="desafio"):
+    with pytest.raises(ValidationError, match="challenge"):
         check(att, root, expect_challenge=(b"\x02" * 16).hex())
 
 
@@ -127,9 +127,9 @@ def test_key_level_above_device_maximum_is_rejected():
     hw = root.provision("tee", not_before=NOW - 100, not_after=NOW + 10**6)
     h = hw.generate_key("p256", b"\x01" * 16)
     att = copy.deepcopy(h.attestation)
-    att["key"]["level"] = "strongbox"                            # o dispositivo só atesta até "tee"
-    att["key_sig"] = hw._dev.sign(key_statement_bytes(att["key"])).hex()   # white-box: assinatura válida do dispositivo
-    with pytest.raises(ValidationError, match="acima"):
+    att["key"]["level"] = "strongbox"                            # the device only attests up to "tee"
+    att["key_sig"] = hw._dev.sign(key_statement_bytes(att["key"])).hex()   # white-box: valid device signature
+    with pytest.raises(ValidationError, match="above"):
         check(att, root)
 
 
@@ -173,7 +173,7 @@ def test_every_attestation_field_is_bound():
         with pytest.raises(ValidationError):
             check(bad, root)
         n += 1
-    assert n == len(list(_paths(base))) >= 15            # TODOS os campos adulterados
+    assert n == len(list(_paths(base))) >= 15            # ALL fields tampered with
 
 
 def test_attestation_fuzz_only_validation_errors():

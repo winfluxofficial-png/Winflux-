@@ -4,9 +4,9 @@ data class Utxo(val txid: String, val index: Int, val value: Long, val address: 
 data class TxIn(val txid: String, val index: Int, val pubkey: String, val signature: String)
 data class TxOut(val value: Long, val address: String)
 
-/** Transferência comum assinada (kind = "transfer"). Formato e txid idênticos aos de winflux/blockchain/transaction.py. */
+/** Plain signed transfer (kind = "transfer"). Format and txid identical to winflux/blockchain/transaction.py. */
 class SignedTx(val chainId: String, val inputs: List<TxIn>, val outputs: List<TxOut>) {
-    /** Corpo que define o txid: SEM assinaturas. */
+    /** Body that defines the txid: WITHOUT signatures. */
     private fun body(): Map<String, Any?> = mapOf(
         "version" to 1, "chain_id" to chainId, "coinbase_height" to null, "kind" to "transfer", "payload" to null,
         "inputs" to inputs.map { mapOf("txid" to it.txid, "index" to it.index, "pubkey" to it.pubkey) },
@@ -20,7 +20,7 @@ class SignedTx(val chainId: String, val inputs: List<TxIn>, val outputs: List<Tx
 
     fun toJson(): String = CanonicalJson.encode(toMap())
 
-    /** Tamanho usado pela taxa por byte: JSON canônico COM assinaturas (ASCII => 1 byte por caractere). */
+    /** Size used by the per-byte fee: canonical JSON WITH signatures (ASCII => 1 byte per character). */
     fun size(): Int = toJson().length
 
     companion object {
@@ -38,24 +38,24 @@ class InsufficientFunds(message: String) : Exception(message)
 
 data class FeeRules(val minFee: Long, val minFeePerByte: Long, val maxTxSize: Int, val maxInputs: Int, val maxOutputs: Int)
 
-/** Coin selection e assinatura (maiores primeiro), como `build_payment` do nó de referência. */
+/** Coin selection and signing (largest first), like the reference node's `build_payment`. */
 object TxBuilder {
-    /** `owner(address)` devolve o índice HD que controla o endereço, ou null. */
+    /** `owner(address)` returns the HD index that controls the address, or null. */
     fun build(
         wallet: HdWallet, owner: (String) -> Int?, utxos: List<Utxo>, to: String, amount: Long, change: String,
         chainId: String, rules: FeeRules,
     ): SignedTx {
-        if (!Address.isValid(to) || !Address.isValid(change)) throw WalletException("endereço inválido")
-        if (amount <= 0) throw WalletException("valor inválido")
+        if (!Address.isValid(to) || !Address.isValid(change)) throw WalletException("invalid address")
+        if (amount <= 0) throw WalletException("invalid amount")
         var trial = rules.minFee
         repeat(8) {
             val tx = assemble(wallet, owner, utxos, to, amount, change, chainId, trial, rules)
             val need = maxOf(rules.minFee, rules.minFeePerByte * tx.size())
-            if (tx.size() > rules.maxTxSize) throw WalletException("transação grande demais: consolide as moedas")
+            if (tx.size() > rules.maxTxSize) throw WalletException("transaction too large: consolidate the coins")
             if (trial >= need) return tx
             trial = need
         }
-        throw WalletException("não foi possível estimar a taxa")
+        throw WalletException("could not estimate the fee")
     }
 
     fun feeOf(tx: SignedTx, utxos: List<Utxo>): Long {
@@ -74,14 +74,14 @@ object TxBuilder {
             chosen.add(u); total += u.value
             if (total >= need) break
         }
-        if (total < need) throw InsufficientFunds("saldo insuficiente: tem $total, precisa $need")
-        if (chosen.size > rules.maxInputs) throw WalletException("muitas entradas: consolide as moedas antes")
+        if (total < need) throw InsufficientFunds("insufficient funds: have $total, need $need")
+        if (chosen.size > rules.maxInputs) throw WalletException("too many inputs: consolidate the coins first")
         val outputs = ArrayList<TxOut>().apply {
             add(TxOut(amount, to))
             if (total - need > 0) add(TxOut(total - need, change))
         }
-        if (outputs.size > rules.maxOutputs) throw WalletException("saídas demais")
-        val idx = chosen.map { owner(it.address) ?: throw WalletException("sem chave para um dos endereços de origem") }
+        if (outputs.size > rules.maxOutputs) throw WalletException("too many outputs")
+        val idx = chosen.map { owner(it.address) ?: throw WalletException("no key for one of the source addresses") }
         val unsigned = chosen.mapIndexed { i, u -> TxIn(u.txid, u.index, wallet.key(idx[i]).pub.toHex(), "") }
         val msg = SignedTx.signingMessage(SignedTx.txidOf(chainId, unsigned, outputs))
         val signed = unsigned.mapIndexed { i, inp -> inp.copy(signature = wallet.sign(idx[i], msg).toHex()) }

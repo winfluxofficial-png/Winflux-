@@ -1,4 +1,4 @@
-"""Demonstração local de ponta a ponta (1 processo): gênese -> transferência -> blocos."""
+"""End-to-end local demo (1 process): genesis -> transfer -> blocks."""
 import os
 import tempfile
 
@@ -20,10 +20,10 @@ chain = Chain(cfg, ProofOfAuthority(), BlockStorage(db))
 
 
 def show(title):
-    print(f"\n== {title} (altura {chain.height}) ==")
-    for name, k in (("alice", alice), ("bob", bob), ("produtor", producer)):
+    print(f"\n== {title} (height {chain.height}) ==")
+    for name, k in (("alice", alice), ("bob", bob), ("producer", producer)):
         print(f"  {name:9s} {k.address}  {format_units(chain.balance(k.address))} WFLX")
-    print(f"  oferta total: {format_units(chain.total_supply())} WFLX (máx {format_units(params.max_supply)})")
+    print(f"  total supply: {format_units(chain.total_supply())} WFLX (max {format_units(params.max_supply)})")
 
 
 def mine(txs=()):
@@ -33,13 +33,13 @@ def mine(txs=()):
     return b
 
 
-show("gênese")
+show("genesis")
 tx = build_transfer(alice, chain.utxo.utxos_for(alice.address), bob.address,
                     to_units("1250.5"), 1000, params.chain_id)
-print(f"\ntransação {tx.txid}\n  entradas={len(tx.inputs)} saídas={len(tx.outputs)} "
-      f"taxa={format_units(chain.check_transaction(tx))} WFLX (validada contra o UTXO)")
+print(f"\ntransaction {tx.txid}\n  inputs={len(tx.inputs)} outputs={len(tx.outputs)} "
+      f"fee={format_units(chain.check_transaction(tx))} WFLX (validated against the UTXO set)")
 blk = mine([tx])
-show("após bloco 1")
-print(f"\nbloco 1 hash={blk.hash[:16]}... confirmações da tx: {chain.confirmations(tx.txid)}")
+show("after block 1")
+print(f"\nblock 1 hash={blk.hash[:16]}... tx confirmations: {chain.confirmations(tx.txid)}")
 mine(); mine()
-print(f"após mais 2 blocos, confirmações: {chain.confirmations(tx.txid)}")
+print(f"after 2 more blocks, confirmations: {chain.confirmations(tx.txid)}")

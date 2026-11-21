@@ -1,12 +1,12 @@
-"""API HTTP/JSON mínima (somente leitura + envio de transação) para carteiras e explorers.
+"""Minimal HTTP/JSON API (read-only + transaction submission) for wallets and explorers.
 
-Por padrão o nó escuta em 127.0.0.1. Para expor publicamente, ponha atrás de um proxy com TLS.
-Qualquer carteira pode usar QUALQUER nó: a API não tem contas, chaves nem privilégios.
-Rotas:
+By default the node listens on 127.0.0.1. To expose it publicly, put it behind a proxy with TLS.
+Any wallet can use ANY node: the API has no accounts, keys or privileges.
+Routes:
   GET  /api/status            GET /api/params           GET /api/peers          GET /api/mempool
-  GET  /api/block/<altura|hash>                          GET /api/tx/<txid>
-  GET  /api/address/<endereço>                           POST /api/tx   {corpo = tx em JSON}
-  GET  /api/vault/<id>        estado do cofre (vagas, colateral, prazo)      GET /api/vaults/<endereço-de-reembolso>
+  GET  /api/block/<height|hash>                          GET /api/tx/<txid>
+  GET  /api/address/<address>                            POST /api/tx   {body = tx as JSON}
+  GET  /api/vault/<id>        vault state (slots, collateral, deadline)      GET /api/vaults/<refund-address>
 """
 import asyncio
 import json
@@ -24,9 +24,9 @@ MAX_BODY = 200_000
 MAX_HEADER_BYTES = 16_384
 MAX_HEADERS = 64
 MAX_REQUEST_LINE = 2_048
-REQUEST_TIMEOUT = 20                 # s para receber o pedido inteiro (anti-slowloris)
-MAX_REQ_PER_MIN = 600                # leituras por IP (padrão)
-MAX_TX_PER_MIN = 60                  # POST /api/tx por IP (padrão): mais caro, mais restrito
+REQUEST_TIMEOUT = 20                 # s to receive the whole request (anti-slowloris)
+MAX_REQ_PER_MIN = 600                # reads per IP (default)
+MAX_TX_PER_MIN = 60                  # POST /api/tx per IP (default): more expensive, more restricted
 MAX_CONNECTIONS = 256
 MAX_CONN_PER_IP = 32
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -37,7 +37,7 @@ _REASONS = {200: "OK", 204: "No Content", 400: "Bad Request", 404: "Not Found", 
 
 
 class _Reject(Exception):
-    """Pedido recusado antes de rotear: (código HTTP, mensagem)."""
+    """Request rejected before routing: (HTTP code, message)."""
 
     def __init__(self, code: int, msg: str):
         super().__init__(msg)
@@ -67,8 +67,8 @@ class ApiServer:
             await self._server.wait_closed()
 
     def _client_ip(self, sock_ip: str, headers: dict) -> str:
-        """Atrás de um proxy confiável (--api-trust-proxy), o IP real é o ÚLTIMO de X-Forwarded-For (o que o proxy
-        acrescentou); valores anteriores são forjáveis pelo cliente. Sem proxy confiável, o cabeçalho é ignorado."""
+        """Behind a trusted proxy (--api-trust-proxy), the real IP is the LAST entry of X-Forwarded-For (the one the proxy
+        appended); earlier values can be forged by the client. Without a trusted proxy, the header is ignored."""
         if self.trust_proxy:
             xff = headers.get("x-forwarded-for", "").split(",")[-1].strip()
             if xff and _IP.match(xff):
@@ -78,9 +78,9 @@ class ApiServer:
     async def _handle(self, reader, writer):
         sock_ip = (writer.get_extra_info("peername") or ("?",))[0]
         if self._total >= self.max_connections or self._conns.get(sock_ip, 0) >= self.max_conn_per_ip:
-            self.log(f"API: conexão recusada de {sock_ip} (limite de conexões)", "debug")
+            self.log(f"API: connection refused from {sock_ip} (connection limit)", "debug")
             try:
-                await self._send(writer, 503, {"error": "servidor ocupado"})
+                await self._send(writer, 503, {"error": "server busy"})
             except Exception:
                 pass
             writer.close()
@@ -93,13 +93,13 @@ class ApiServer:
         except _Reject as r:
             await self._safe_send(writer, r.code, {"error": r.msg})
         except asyncio.TimeoutError:
-            self.log(f"API: pedido lento de {sock_ip} cancelado", "debug")
-            await self._safe_send(writer, 408, {"error": "tempo esgotado"})
+            self.log(f"API: slow request from {sock_ip} cancelled", "debug")
+            await self._safe_send(writer, 408, {"error": "timed out"})
         except (asyncio.IncompleteReadError, ConnectionError, OSError, ValueError):
-            await self._safe_send(writer, 400, {"error": "requisição inválida"})
-        except Exception as e:                           # bug nosso: registra só o tipo, nunca o conteúdo
-            self.log(f"API: erro interno {exc_label(e)}", "error")
-            await self._safe_send(writer, 500, {"error": "erro interno"})
+            await self._safe_send(writer, 400, {"error": "invalid request"})
+        except Exception as e:                           # our bug: logs only the type, never the content
+            self.log(f"API: internal error {exc_label(e)}", "error")
+            await self._safe_send(writer, 500, {"error": "internal error"})
         finally:
             self._total -= 1
             self._conns[sock_ip] -= 1
@@ -113,41 +113,41 @@ class ApiServer:
     async def _serve(self, reader, sock_ip):
         line = await reader.readline()
         if len(line) > MAX_REQUEST_LINE:
-            raise _Reject(414, "requisição longa demais")
+            raise _Reject(414, "request too long")
         parts = line.decode("latin1").split()
         if len(parts) < 2:
-            raise _Reject(400, "requisição inválida")
+            raise _Reject(400, "invalid request")
         method, path = parts[0], parts[1].split("?")[0]
         if method not in ("GET", "POST", "OPTIONS"):
-            raise _Reject(405, "método não permitido")
+            raise _Reject(405, "method not allowed")
         headers, total = {}, len(line)
         for _ in range(MAX_HEADERS + 1):
             h = await reader.readline()
             total += len(h)
             if total > MAX_HEADER_BYTES:
-                raise _Reject(431, "cabeçalhos grandes demais")
+                raise _Reject(431, "headers too large")
             if h in (b"\r\n", b"\n", b""):
                 break
             k, _, v = h.decode("latin1").partition(":")
             k = k.strip().lower()
             if k in headers and k == "content-length" and headers[k] != v.strip():
-                raise _Reject(400, "Content-Length conflitante")
+                raise _Reject(400, "conflicting Content-Length")
             headers[k] = v.strip()
         else:
-            raise _Reject(431, "cabeçalhos demais")
+            raise _Reject(431, "too many headers")
         if "transfer-encoding" in headers:
-            raise _Reject(400, "Transfer-Encoding não suportado")
+            raise _Reject(400, "Transfer-Encoding not supported")
         cl = headers.get("content-length", "0") or "0"
         if not re.fullmatch(r"[0-9]{1,9}", cl):
-            raise _Reject(400, "Content-Length inválido")
+            raise _Reject(400, "invalid Content-Length")
         clen = int(cl)
         ip = self._client_ip(sock_ip, headers)
-        # Taxa ANTES de ler o corpo: quem estoura o limite não consome banda nem memória do nó.
+        # Rate BEFORE reading the body: whoever exceeds the limit consumes neither bandwidth nor node memory.
         if not self._reads.allow(ip) or (method == "POST" and path == "/api/tx" and not self._txs.allow(ip)):
-            self.log(f"API: limite de requisições excedido por {ip}", "debug")
-            raise _Reject(429, "limite de requisições")
+            self.log(f"API: request limit exceeded by {ip}", "debug")
+            raise _Reject(429, "request limit")
         if clen > MAX_BODY:
-            raise _Reject(413, "corpo grande demais")
+            raise _Reject(413, "body too large")
         body = await reader.readexactly(clen) if clen else b""
         if method == "OPTIONS":
             return 204, None
@@ -156,7 +156,7 @@ class ApiServer:
         except ValidationError as e:
             return 400, {"error": str(e)}
         except (ValueError, TypeError, KeyError, AttributeError):
-            return 400, {"error": "requisição inválida"}
+            return 400, {"error": "invalid request"}
 
     async def _safe_send(self, writer, code, obj):
         try:
@@ -178,7 +178,7 @@ class ApiServer:
         n, c = self.node, self.node.chain
         seg = [s for s in path.split("/") if s]
         if len(seg) < 2 or seg[0] != "api":
-            return 404, {"error": "rota desconhecida"}
+            return 404, {"error": "unknown route"}
         what = seg[1]
         if method == "GET" and what == "status" and len(seg) == 2:
             return 200, n.status()
@@ -192,25 +192,25 @@ class ApiServer:
         if method == "GET" and what == "block" and len(seg) == 3:
             key = seg[2]
             if not ((key.isascii() and key.isdigit() and len(key) <= 12) or _HEX64.match(key)):
-                return 400, {"error": "altura ou hash de bloco inválido"}
+                return 400, {"error": "invalid block height or hash"}
             b = c.get_block(int(key)) if key.isdigit() else c.get_block_by_hash(key)
             if b is None:
-                return 404, {"error": "bloco não encontrado"}
+                return 404, {"error": "block not found"}
             return 200, {"hash": b.hash, "confirmations": c.height - b.height + 1, **b.to_dict()}
         if method == "GET" and what == "tx" and len(seg) == 3:
             if not _HEX64.match(seg[2]):
-                return 400, {"error": "txid inválido"}
+                return 400, {"error": "invalid txid"}
             r = c.get_transaction(seg[2])
             if r:
                 return 200, {"confirmations": c.confirmations(seg[2]), "height": r[1], "tx": r[0].to_dict()}
             t = n.mempool.get(seg[2])
             if t:
                 return 200, {"confirmations": 0, "height": None, "tx": t.to_dict()}
-            return 404, {"error": "transação não encontrada"}
+            return 404, {"error": "transaction not found"}
         if method == "GET" and what == "address" and len(seg) == 3:
             a = seg[2]
             if not is_valid_address(a):
-                return 400, {"error": "endereço inválido"}
+                return 400, {"error": "invalid address"}
             utxos = c.utxo.utxos_for(a)[:1000]
             m = c.params.coinbase_maturity
             out = []
@@ -223,15 +223,15 @@ class ApiServer:
         if method == "GET" and what == "vault" and len(seg) == 3:
             vid = seg[2]
             if not (len(vid) == 64 and V._HEX.match(vid)):
-                return 400, {"error": "vault_id inválido"}
+                return 400, {"error": "invalid vault_id"}
             v = c.get_vault(vid)
             if v is None:
-                return 404, {"error": "cofre não encontrado"}
+                return 404, {"error": "vault not found"}
             return 200, {**v.to_dict(), "claim_deadline": V.claim_deadline(v, c.params), "height": c.height,
                          "locked": v.locked()}
         if method == "GET" and what == "vaults" and len(seg) == 3:
             if not is_valid_address(seg[2]):
-                return 400, {"error": "endereço inválido"}
+                return 400, {"error": "invalid address"}
             return 200, {"address": seg[2], "height": c.height, "vaults": [
                 {"vault_id": v.vault_id, "state": v.state, "fraud": v.fraud, "expires_height": v.expires_height,
                  "claim_deadline": V.claim_deadline(v, c.params), "locked": v.locked()}
@@ -242,7 +242,7 @@ class ApiServer:
             except ValidationError as e:
                 return 400, {"error": str(e)}
             except (ValueError, TypeError, KeyError, AttributeError):
-                return 400, {"error": "transação malformada (JSON inválido)"}
-            txid = await n.submit_tx(tx)                  # ValidationError sobe e vira 400 em _serve
+                return 400, {"error": "malformed transaction (invalid JSON)"}
+            txid = await n.submit_tx(tx)                  # ValidationError bubbles up and becomes 400 in _serve
             return 200, {"txid": txid}
-        return 404, {"error": "rota desconhecida"}
+        return 404, {"error": "unknown route"}

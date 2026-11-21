@@ -1,4 +1,4 @@
-"""A1: state_root, checkpoints e provas de cofre verificáveis offline — testes adversariais."""
+"""A1: state_root, checkpoints and vault proofs verifiable offline — adversarial tests."""
 import copy
 import json
 import random
@@ -32,12 +32,12 @@ def verify(chain, proof, **kw):
     return P.verify_vault_proof(proof, chain.params, POA, **kw)
 
 
-# ------------------------------------------------------------------ state_root no consenso
+# ------------------------------------------------------------------ state_root in consensus
 def test_state_root_evolves_with_vault_state_and_is_committed_in_header(keys, dev):
     chain = vchain(keys)
     assert chain.tip.state_root == SR.EMPTY_VAULT_ROOT
     mine(chain, keys)
-    assert chain.tip.state_root == SR.EMPTY_VAULT_ROOT                     # sem cofres: não muda
+    assert chain.tip.state_root == SR.EMPTY_VAULT_ROOT                     # no vaults: does not change
     vid = open_vault(chain, keys, dev)
     r1 = chain.tip.state_root
     assert r1 != SR.EMPTY_VAULT_ROOT and r1 == chain.ledger.state_root()
@@ -45,7 +45,7 @@ def test_state_root_evolves_with_vault_state_and_is_committed_in_header(keys, de
     r2 = chain.tip.state_root
     assert r2 != r1
     blk = chain.tip
-    assert replace(blk, state_root=r1).hash != blk.hash                    # o cabeçalho (e o hash) cobre o root
+    assert replace(blk, state_root=r1).hash != blk.hash                    # the header (and the hash) covers the root
 
 
 def test_forged_state_root_is_rejected(keys, dev):
@@ -53,13 +53,13 @@ def test_forged_state_root_is_rejected(keys, dev):
     vid = open_vault(chain, keys, dev)
     tx = build_voucher_claim(issue(chain, dev, vid, 0, 5 * WFLX, keys["bob"]), chain.get_vault(vid), chain.params)
     tmpl = chain.create_block(keys["producer"].public_hex, keys["producer"].address, [tx])
-    for bad in (SR.EMPTY_VAULT_ROOT, "ab" * 32, chain.tip.state_root):    # vazio, lixo, o root ANTIGO
+    for bad in (SR.EMPTY_VAULT_ROOT, "ab" * 32, chain.tip.state_root):    # empty, garbage, the OLD root
         forged = replace(tmpl, state_root=bad)
         chain.consensus.seal(forged, keys["producer"])
         with pytest.raises(ValidationError, match="state_root"):
             chain.add_block(forged)
     chain.consensus.seal(tmpl, keys["producer"])
-    chain.add_block(tmpl)                                                  # o root correto passa
+    chain.add_block(tmpl)                                                  # the correct root passes
 
 
 def test_state_root_identical_on_independent_replay_and_after_undo(keys, dev):
@@ -95,26 +95,26 @@ def test_merkle_rejects_wrong_index_count_path_and_leaf():
     top = SR.merkle_top(leaves)
     path = SR.merkle_path(leaves, 4)
     assert SR.top_from_path(leaves[4], 5, n, path) != top
-    assert SR.top_from_path(leaves[4], 4, n, path[:-1]) is None            # caminho curto
-    assert SR.top_from_path(leaves[4], 4, n, path + [path[0]]) is None     # caminho longo
-    assert SR.top_from_path(leaves[4], 4, n + 6, path) is None             # outra profundidade
-    assert SR.top_from_path(leaves[4], 11, n, path) is None                # índice fora
-    assert SR.top_from_path(leaves[5], 4, n, path) != top                  # folha errada
+    assert SR.top_from_path(leaves[4], 4, n, path[:-1]) is None            # short path
+    assert SR.top_from_path(leaves[4], 4, n, path + [path[0]]) is None     # long path
+    assert SR.top_from_path(leaves[4], 4, n + 6, path) is None             # another depth
+    assert SR.top_from_path(leaves[4], 11, n, path) is None                # index out of range
+    assert SR.top_from_path(leaves[5], 4, n, path) != top                  # wrong leaf
     assert SR.top_from_path(leaves[4], 4, n, [bytes(32)] + path[1:]) != top
-    # a contagem entra no compromisso: a mesma árvore com outro n produz outra raiz
+    # the count enters the commitment: the same tree with another n produces another root
     assert SR.bind_vaults(n, top) != SR.bind_vaults(n + 1, top) and SR.bind_vaults(0, top) != SR.bind_vaults(1, top)
 
 
 def test_leaf_and_node_domains_are_separated():
     a, b = SR._leaf(b"a"), SR._leaf(b"b")
-    assert SR._node(a, b) != SR._leaf(a + b)                               # nó interno ≠ folha com o mesmo conteúdo
+    assert SR._node(a, b) != SR._leaf(a + b)                               # internal node ≠ leaf with the same content
 
 
-# ------------------------------------------------------------------ prova: caminho feliz
+# ------------------------------------------------------------------ proof: happy path
 def test_proof_roundtrip_and_fields(keys, dev):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev, caps=(10 * WFLX, 12 * WFLX), ttl=7)
-    proof = json.loads(json.dumps(proof_for(chain, vid, 1)))               # sobrevive a QR/JSON
+    proof = json.loads(json.dumps(proof_for(chain, vid, 1)))               # survives QR/JSON
     vs = verify(chain, proof)
     assert (vs.vault_id, vs.slot, vs.cap, vs.collateral_left, vs.paid) == (vid, 1, 12 * WFLX, 12 * WFLX, 0)
     assert not vs.claimed and not vs.fraud and vs.state == "OPEN" and vs.key_type == dev.key_type
@@ -142,14 +142,14 @@ def test_proof_among_many_vaults_is_small(keys):
     size = len(canonical_size(proof))
     vs = verify(chain, proof)
     assert vs.slot == 63 and vs.vault_id == ids[7]
-    assert size < 3000, f"prova grande demais: {size} bytes"
+    assert size < 3000, f"proof too large: {size} bytes"
 
 
 def canonical_size(proof):
     return json.dumps(proof, separators=(",", ":")).encode()
 
 
-# ------------------------------------------------------------------ prova: adulteração
+# ------------------------------------------------------------------ proof: tampering
 def _paths(o, pre=()):
     if isinstance(o, dict):
         for k, v in o.items():
@@ -188,7 +188,7 @@ def _altered(v):
 
 def test_every_single_field_of_the_proof_is_bound(keys, dev):
     chain = vchain(keys)
-    for _ in range(4):                                                     # caminho do cofre não vazio
+    for _ in range(4):                                                     # non-empty vault path
         open_vault(chain, keys, dev, caps=(10 * WFLX,), ttl=15)
     vid = open_vault(chain, keys, dev, caps=(10 * WFLX, 10 * WFLX, 10 * WFLX), ttl=15)
     claim(chain, keys, issue(chain, dev, vid, 2, 3 * WFLX, keys["bob"]))
@@ -202,7 +202,7 @@ def test_every_single_field_of_the_proof_is_bound(keys, dev):
         with pytest.raises(ValidationError):
             verify(chain, mutated)
         n += 1
-    assert n == len(list(_paths(base))) >= 33                              # TODOS os campos foram adulterados
+    assert n == len(list(_paths(base))) >= 33                              # ALL fields were tampered with
 
 
 def test_proof_fuzz_only_validation_errors(keys, dev):
@@ -219,7 +219,7 @@ def test_proof_fuzz_only_validation_errors(keys, dev):
             verify(chain, m)
         except ValidationError:
             continue
-        assert m == base                                                   # só a prova original passa
+        assert m == base                                                   # only the original proof passes
 
 
 def test_structural_attacks(keys, dev):
@@ -235,43 +235,43 @@ def test_structural_attacks(keys, dev):
         verify(chain, long_path)
 
 
-# ------------------------------------------------------------------ checkpoint e autoridade
+# ------------------------------------------------------------------ checkpoint and authority
 def test_checkpoint_must_come_from_the_authority_of_that_height(keys, dev):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev)
     proof = proof_for(chain, vid)
     hdr = dict(proof["checkpoint"]["header"])
-    # (a) forjado por quem não é autoridade, com o MESMO state_root
+    # (a) forged by someone who is not an authority, with the SAME state_root
     fake = Block(hdr["height"], hdr["prev_hash"], hdr["timestamp"], hdr["merkle_root"], keys["mallory"].public_hex,
                  hdr["nonce"], hdr["meta"], (), "", hdr["state_root"])
     POA.seal(fake, keys["mallory"])
     forged = copy.deepcopy(proof)
     forged["checkpoint"] = P.make_checkpoint(fake)
-    with pytest.raises(ValidationError, match="da vez"):
+    with pytest.raises(ValidationError, match="whose turn"):
         verify(chain, forged)
-    # (b) cabeçalho assinado por outra chave que a do produtor declarado
+    # (b) header signed by a key other than the declared producer's
     forged2 = copy.deepcopy(proof)
     forged2["checkpoint"]["signature"] = keys["mallory"].sign(b"x").hex()
-    with pytest.raises(ValidationError, match="assinatura"):
+    with pytest.raises(ValidationError, match="signature"):
         verify(chain, forged2)
-    # (c) assinatura válida reaproveitada com state_root alterado
+    # (c) valid signature reused with a changed state_root
     forged3 = copy.deepcopy(proof)
     forged3["checkpoint"]["header"]["state_root"] = SR.EMPTY_VAULT_ROOT
-    with pytest.raises(ValidationError, match="assinatura"):
+    with pytest.raises(ValidationError, match="signature"):
         verify(chain, forged3)
 
 
 def test_two_authorities_round_robin_checkpoints(keys, dev):
     chain = vchain(keys, authorities=(keys["producer"].public_hex, keys["carol"].public_hex))
-    blk = mine(chain, keys)                                                # altura 1: produtor
+    blk = mine(chain, keys)                                                # height 1: producer
     assert P.verify_checkpoint(P.make_checkpoint(blk), chain.params, POA).height == 1
     b2 = chain.create_block(keys["carol"].public_hex, keys["carol"].address, [])
     chain.consensus.seal(b2, keys["carol"])
-    chain.add_block(b2)                                                    # altura 2: carol
+    chain.add_block(b2)                                                    # height 2: carol
     cp = P.make_checkpoint(b2)
     assert P.verify_checkpoint(cp, chain.params, POA).height == 2
     wrong = copy.deepcopy(cp)
-    wrong["header"]["height"] = 3                                          # altura 3 seria do produtor
+    wrong["header"]["height"] = 3                                          # height 3 would be the producer's
     with pytest.raises(ValidationError):
         P.verify_checkpoint(wrong, chain.params, POA)
 
@@ -286,26 +286,26 @@ def test_proof_from_another_network_is_rejected(keys, dev):
     a = vchain(keys)
     vid = open_vault(a, keys, dev)
     proof = proof_for(a, vid)
-    b = vchain(keys, chain_id="outra-rede")                                 # mesmas autoridades, outra rede
+    b = vchain(keys, chain_id="other-network")                                 # same authorities, another network
     with pytest.raises(ValidationError):
         P.verify_vault_proof(proof, b.params, POA)
     verify(a, proof)
 
 
-# ------------------------------------------------------------------ frescor e relógio
+# ------------------------------------------------------------------ freshness and clock
 def test_stale_proof_rejected_by_receiver_memory(keys, dev):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev)
-    old = proof_for(chain, vid)                                            # vaga LIVRE neste checkpoint
+    old = proof_for(chain, vid)                                            # slot FREE at this checkpoint
     claim(chain, keys, issue(chain, dev, vid, 0, 5 * WFLX, keys["bob"]))
     new = proof_for(chain, vid)
     store = P.CheckpointStore()
     vs_new = verify(chain, new, min_checkpoint_height=store.min_height())
     store.observe(vs_new.checkpoint_height, vs_new.checkpoint_hash)
     assert vs_new.claimed
-    with pytest.raises(ValidationError, match="mais antigo"):
-        verify(chain, old, min_checkpoint_height=store.min_height())       # mostrar o estado antigo falha
-    verify(chain, old)                                                     # sem memória, a prova ainda "vale"
+    with pytest.raises(ValidationError, match="older"):
+        verify(chain, old, min_checkpoint_height=store.min_height())       # showing the old state fails
+    verify(chain, old)                                                     # without memory, the proof is still "valid"
 
 
 def test_checkpoint_store_monotonic_and_conflict_detection():
@@ -314,7 +314,7 @@ def test_checkpoint_store_monotonic_and_conflict_detection():
     assert s.min_height() == 10 and s.hash == "aa"
     s.observe(11, "cc")
     assert s.min_height() == 11
-    with pytest.raises(ValidationError, match="conflitantes"):
+    with pytest.raises(ValidationError, match="conflicting"):
         s.observe(11, "dd")
 
 
@@ -331,11 +331,11 @@ def test_deadline_estimation_uses_receivers_clock_only(keys, dev):
     assert later == deadline - vs.checkpoint_height - 3
 
 
-# ------------------------------------------------------------------ construção
+# ------------------------------------------------------------------ construction
 def test_build_proof_errors(keys, dev):
     chain = vchain(keys)
     with pytest.raises(ValidationError):
-        proof_for(chain, "ab" * 32)                                        # cofre inexistente
+        proof_for(chain, "ab" * 32)                                        # nonexistent vault
     vid = open_vault(chain, keys, dev)
     with pytest.raises(ValidationError):
-        proof_for(chain, vid, 9)                                           # vaga inexistente
+        proof_for(chain, vid, 9)                                           # nonexistent slot

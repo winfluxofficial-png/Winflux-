@@ -1,4 +1,4 @@
-"""Princípios de descentralização verificáveis em código (docs/decentralization.md)."""
+"""Decentralization principles verifiable in code (docs/decentralization.md)."""
 import pathlib
 import re
 
@@ -13,11 +13,11 @@ from .test_pow_reorg import make_pow_chain, mine_on, pow_params
 
 
 def test_public_network_has_no_privileged_party():
-    cfg = make_genesis("principios")
+    cfg = make_genesis("principles")
     assert cfg.params.consensus == "pow" and cfg.params.authorities == ()
-    assert cfg.allocations == ()                      # sem pré-mineração
+    assert cfg.allocations == ()                      # no premine
     with pytest.raises(ValidationError):
-        pow_params(authorities=("ab" * 32,))          # PoW não aceita autoridades
+        pow_params(authorities=("ab" * 32,))          # PoW does not accept authorities
 
 
 def test_only_mining_creates_coins_and_supply_cap_holds():
@@ -30,7 +30,7 @@ def test_only_mining_creates_coins_and_supply_cap_holds():
 
 def test_any_address_can_mine_without_permission():
     chain = make_pow_chain()
-    stranger = kp(77).address                          # nunca visto antes
+    stranger = kp(77).address                          # never seen before
     assert chain.add_block(mine_on(chain, stranger)).status == "extended"
     assert chain.balance(stranger) == chain.params.block_reward
 

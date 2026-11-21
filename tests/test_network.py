@@ -1,4 +1,4 @@
-"""Rede real em localhost: vários nós, propagação, sincronização, reorg e defesas."""
+"""Real network on localhost: several nodes, propagation, sync, reorg and defenses."""
 import asyncio
 import json
 import time
@@ -54,7 +54,7 @@ def test_three_nodes_propagate_blocks_and_transactions():
                 await a.mine_one(kp(4).address)
             assert await wait_for(lambda: b.chain.height == 4 and c.chain.height == 4)
             assert same_tip(a, b, c)
-            # transação enviada ao nó C chega a todos e é minerada por B
+            # a transaction sent to node C reaches everyone and is mined by B
             tx = build_transfer(kp(2), c.chain.utxo.utxos_for(kp(2).address), kp(3).address, 7 * WFLX,
                                 2000, cfg.params.chain_id)
             await c.submit_tx(tx)
@@ -97,7 +97,7 @@ def test_partition_then_heal_converges_to_heaviest_chain():
             for _ in range(4):
                 await y.mine_one(kp(5).address)
             assert not same_tip(x, y)
-            x.p2p.known_addrs[("127.0.0.1", y.port)] = 0     # a partição acaba
+            x.p2p.known_addrs[("127.0.0.1", y.port)] = 0     # the partition ends
             assert await wait_for(lambda: same_tip(x, y) and x.chain.height == 4)
             assert x.chain.balance(kp(4).address) == 0 and x.chain.balance(kp(5).address) == 200 * WFLX
         finally:
@@ -108,7 +108,7 @@ def test_partition_then_heal_converges_to_heaviest_chain():
 def test_different_network_is_refused():
     async def go():
         a = await start(genesis())
-        b = await start(genesis(chain_id="outra-rede"), seeds=[f"127.0.0.1:{a.port}"])
+        b = await start(genesis(chain_id="other-network"), seeds=[f"127.0.0.1:{a.port}"])
         try:
             await asyncio.sleep(2.5)
             assert not a.p2p.ready_peers() and not b.p2p.ready_peers()
@@ -123,10 +123,10 @@ def test_garbage_and_invalid_blocks_get_peer_banned():
         a = await start(cfg)
         try:
             r, w = await asyncio.open_connection("127.0.0.1", a.port)
-            for _ in range(6):                       # 6 mensagens malformadas (+20 cada) => banido
+            for _ in range(6):                       # 6 malformed messages (+20 each) => banned
                 w.write((5).to_bytes(4, "big") + b"nojson")
             await w.drain()
-            data = await asyncio.wait_for(r.read(), 5)  # o nó fecha a conexão
+            data = await asyncio.wait_for(r.read(), 5)  # the node closes the connection
             assert a.p2p.is_banned("127.0.0.1")
         finally:
             await a.stop()
@@ -141,7 +141,7 @@ def test_peer_sending_invalid_block_is_banned_and_chain_unaffected():
         try:
             blk = await miner.mine_one(kp(4).address)
             d = blk.to_dict()
-            d["transactions"][0]["outputs"][0]["value"] += 1     # coinbase inflada => Merkle quebrado
+            d["transactions"][0]["outputs"][0]["value"] += 1     # inflated coinbase => broken Merkle
             r, w = await asyncio.open_connection("127.0.0.1", a.port)
 
             async def send(t, data):

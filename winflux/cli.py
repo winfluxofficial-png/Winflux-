@@ -1,10 +1,10 @@
-"""Carteira de linha de comando. Fala com QUALQUER nó pela API; as chaves nunca saem daqui.
+"""Command-line wallet. Talks to ANY node through the API; the keys never leave here.
 
-    python -m winflux.cli --node http://127.0.0.1:8080 --wallet minha.json create
-    python -m winflux.cli ... address | balance | send <endereço> <valor> | status | recover <chave>
+    python -m winflux.cli --node http://127.0.0.1:8080 --wallet mine.json create
+    python -m winflux.cli ... address | balance | send <address> <amount> | status | recover <key>
     python -m winflux.cli ... vaults | reconcile <vault_id> [--journal vault-journal.json] | vault-refund <vault_id>
 
-Senha: variável WINFLUX_WALLET_PASSWORD ou prompt (nunca pela linha de comando).
+Password: WINFLUX_WALLET_PASSWORD variable or prompt (never on the command line).
 """
 import argparse
 import getpass
@@ -32,7 +32,7 @@ def api(node: str, path: str, data=None):
     except urllib.error.HTTPError as e:
         raise WinfluxError(json.load(e).get("error", str(e))) from None
     except OSError as e:
-        raise WinfluxError(f"não consegui falar com o nó {node}: {e}") from None
+        raise WinfluxError(f"could not reach node {node}: {e}") from None
 
 
 class _Utxo:
@@ -46,7 +46,7 @@ class _Utxo:
 
 
 class RemoteChain:
-    """Adaptador com a interface mínima que HDWallet espera, apoiado na API do nó."""
+    """Adapter with the minimal interface HDWallet expects, backed by the node API."""
 
     def __init__(self, node: str):
         self.node = node
@@ -67,11 +67,11 @@ def _password(confirm=False) -> str:
     pw = os.environ.get("WINFLUX_WALLET_PASSWORD")
     if pw:
         return pw
-    pw = getpass.getpass("Senha da carteira: ")
-    if confirm and getpass.getpass("Repita a senha: ") != pw:
-        raise WinfluxError("as senhas não conferem")
+    pw = getpass.getpass("Wallet password: ")
+    if confirm and getpass.getpass("Repeat the password: ") != pw:
+        raise WinfluxError("passwords do not match")
     if len(pw) < 8:
-        raise WinfluxError("use uma senha com 8 ou mais caracteres")
+        raise WinfluxError("use a password with 8 or more characters")
     return pw
 
 
@@ -94,11 +94,11 @@ def main(argv=None):
             hd = HDWallet.generate() if a.cmd == "create" else HDWallet.from_recovery_key(a.key)
             from .crypto.keys import KeyPair
             Wallet(KeyPair(hd._master)).save(a.wallet, _password(confirm=True))
-            print(f"carteira gravada em {a.wallet}\nendereço: {hd.address(0)}")
+            print(f"wallet saved to {a.wallet}\naddress: {hd.address(0)}")
             if a.cmd == "create":
-                print(f"CHAVE DE RECUPERAÇÃO (anote em papel; quem a tem controla os fundos):\n  {hd.recovery_key()}")
+                print(f"RECOVERY KEY (write it on paper; whoever has it controls the funds):\n  {hd.recovery_key()}")
             return 0
-        if a.cmd in ("reconcile", "vault-refund"):            # sem carteira: o reembolso vai ao endereço registrado no cofre
+        if a.cmd in ("reconcile", "vault-refund"):            # no wallet: the refund goes to the address registered in the vault
             from .blockchain.vaults import Vault
             from .wallet.vault_builder import build_vault_refund
             params = ChainParams.from_dict(api(a.node, "/api/params"))
@@ -108,7 +108,7 @@ def main(argv=None):
                 print(render(reconcile(vault, Journal.load(a.journal), params, d["height"]), params.symbol))
             else:
                 res = api(a.node, "/api/tx", build_vault_refund(vault, params).to_dict())
-                print(f"reembolso enviado: {res['txid']}")
+                print(f"refund sent: {res['txid']}")
             return 0
         hd = HDWallet.from_wallet(Wallet.load(a.wallet, _password()))
         chain = RemoteChain(a.node)
@@ -119,10 +119,10 @@ def main(argv=None):
                 for v in api(a.node, f"/api/vaults/{hd.address(i)}")["vaults"]:
                     if v["vault_id"] not in seen:
                         seen.add(v["vault_id"])
-                        print(f"{v['vault_id']}  {v['state']}{'  FRAUDE' if v['fraud'] else ''}  "
-                              f"prazo={v['claim_deadline']}  travado={format_units(v['locked'])} {chain.params.symbol}")
+                        print(f"{v['vault_id']}  {v['state']}{'  FRAUD' if v['fraud'] else ''}  "
+                              f"deadline={v['claim_deadline']}  locked={format_units(v['locked'])} {chain.params.symbol}")
             if not seen:
-                print("nenhum cofre encontrado para esta carteira")
+                print("no vault found for this wallet")
         elif a.cmd == "address":
             print(hd.address(max(0, hd.next_index - 1)) if hd.next_index else hd.address(0))
         elif a.cmd == "balance":
@@ -131,10 +131,10 @@ def main(argv=None):
             fee = None if a.fee is None else to_units(a.fee)
             tx = hd.pay(chain, a.to, to_units(a.amount), fee)
             res = api(a.node, "/api/tx", tx.to_dict())
-            print(f"enviada: {res['txid']}")
+            print(f"sent: {res['txid']}")
         return 0
     except (WinfluxError, ValueError) as e:
-        print(f"erro: {e}", file=sys.stderr)
+        print(f"error: {e}", file=sys.stderr)
         return 1
 
 

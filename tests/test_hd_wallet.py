@@ -1,4 +1,4 @@
-"""Fase 0: carteira HD, troco em endereço novo, chave de recuperação, taxa automática."""
+"""Phase 0: HD wallet, change to a new address, recovery key, automatic fee."""
 import pytest
 
 from winflux.blockchain.validation import required_fee
@@ -26,9 +26,9 @@ def test_derivation_is_deterministic_and_distinct():
 def test_recovery_key_roundtrip_and_typo_detection():
     rk = encode_recovery_key(SEED)
     assert rk.startswith("wflxk1-") and decode_recovery_key(rk) == SEED
-    assert decode_recovery_key(rk.upper().replace("-", " ")) == SEED  # tolera formatação
+    assert decode_recovery_key(rk.upper().replace("-", " ")) == SEED  # tolerates formatting
     alphabet = "abcdefghijklmnopqrstuvwxyz234567"
-    for pos in (-1, -2, 10, 25):  # qualquer caractere trocado deve ser detectado (inclusive o último)
+    for pos in (-1, -2, 10, 25):  # any swapped character must be detected (including the last one)
         chars = list(rk)
         chars[pos] = next(c for c in alphabet if c != chars[pos] and c != "-")
         with pytest.raises(WalletError):
@@ -52,14 +52,14 @@ def test_pay_sends_change_to_a_fresh_address(keys):
     assert len(change) == 1 and change[0].address == hd.address(1) != hd.address(0)
     mine(chain, keys, [tx])
     assert chain.balance(keys["bob"].address) == 10 * WFLX
-    assert chain.balance(hd.address(0)) == 0                      # endereço antigo esvaziado
+    assert chain.balance(hd.address(0)) == 0                      # old address emptied
     fee = 1000 * WFLX - 10 * WFLX - change[0].value
     assert fee >= chain.params.min_fee and chain.balance(hd.address(1)) == change[0].value
     assert hd.balance(chain) == chain.balance(hd.address(1))
 
 
 def test_change_skips_addresses_already_on_chain(keys):
-    """Endereço 0 recebeu fundos sem passar por new_address(): o troco NÃO pode voltar a ele."""
+    """Address 0 received funds without going through new_address(): the change MUST NOT go back to it."""
     hd = HDWallet(SEED)
     chain = funded(keys, hd)
     assert hd.next_index == 0 and chain.address_seen(hd.address(0))
@@ -77,15 +77,15 @@ def test_no_address_reuse_across_many_payments(keys):
         spent_from.update(pubkey for pubkey in (i.pubkey for i in tx.inputs))
         change_addrs += [o.address for o in tx.outputs if o.address != keys["bob"].address]
         mine(chain, keys, [tx])
-    assert len(set(change_addrs)) == 6                    # um endereço novo a cada troco
-    assert len(spent_from) == 6                           # cada chave pública exposta só uma vez
+    assert len(set(change_addrs)) == 6                    # a new address for each change output
+    assert len(spent_from) == 6                           # each public key exposed only once
     assert hd.address(0) not in change_addrs
 
 
 def test_pay_spends_from_several_addresses(keys):
     hd = HDWallet(SEED, next_index=3)
     chain = funded(keys, hd, indexes=(0, 1, 2), amount=100 * WFLX)
-    tx = hd.pay(chain, keys["bob"].address, 250 * WFLX)    # exige as 3 origens
+    tx = hd.pay(chain, keys["bob"].address, 250 * WFLX)    # requires the 3 origins
     assert len(tx.inputs) == 3 and len({i.pubkey for i in tx.inputs}) == 3
     mine(chain, keys, [tx])
     assert chain.balance(keys["bob"].address) == 250 * WFLX
@@ -96,14 +96,14 @@ def test_insufficient_funds(keys):
     chain = funded(keys, hd, amount=5 * WFLX)
     with pytest.raises(InsufficientFunds):
         hd.pay(chain, keys["bob"].address, 10 * WFLX)
-    assert hd.next_index == 0                              # falha não consome endereço
+    assert hd.next_index == 0                              # failure does not consume an address
 
 
 def test_auto_fee_is_minimal_and_accepted(keys):
     hd = HDWallet(SEED)
     chain = funded(keys, hd, indexes=tuple(range(40)), amount=100 * WFLX)
     hd.next_index = 40
-    tx = hd.pay(chain, keys["bob"].address, 3500 * WFLX)    # muitas entradas => taxa por byte
+    tx = hd.pay(chain, keys["bob"].address, 3500 * WFLX)    # many inputs => fee per byte
     fee = chain.check_transaction(tx)
     assert fee == required_fee(tx, chain.params) > chain.params.min_fee
     mine(chain, keys, [tx])
@@ -117,15 +117,15 @@ def test_discover_restores_state_from_chain(keys):
     restored = HDWallet.from_recovery_key(hd.recovery_key())
     assert restored.next_index == 0
     restored.discover(chain)
-    assert restored.next_index == hd.next_index == 4   # índices 0..3 já usados
+    assert restored.next_index == hd.next_index == 4   # indices 0..3 already used
     assert restored.balance(chain) == hd.balance(chain) > 0
-    mine(chain, keys, [restored.pay(chain, keys["carol"].address, WFLX)])  # consegue gastar
+    mine(chain, keys, [restored.pay(chain, keys["carol"].address, WFLX)])  # can spend
 
 
 def test_from_existing_wallet_keystore(tmp_path):
     w = Wallet.create()
     p = tmp_path / "w.json"
-    w.save(str(p), "senha-de-teste-123", kdf_n=KDF_N)
-    a = HDWallet.from_wallet(Wallet.load(str(p), "senha-de-teste-123"))
+    w.save(str(p), "test-password-123", kdf_n=KDF_N)
+    a = HDWallet.from_wallet(Wallet.load(str(p), "test-password-123"))
     b = HDWallet.from_wallet(w)
     assert a.address(0) == b.address(0) and a.address(0) != w.address

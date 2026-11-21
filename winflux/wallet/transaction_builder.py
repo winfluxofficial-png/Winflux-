@@ -1,4 +1,4 @@
-"""Montagem e assinatura de transferências (coin selection simples)."""
+"""Building and signing transfers (simple coin selection)."""
 from dataclasses import replace
 
 from ..blockchain.transaction import Transaction, TxInput, TxOutput
@@ -11,22 +11,22 @@ from ..blockchain.validation import required_fee
 def build_transfer(keypair: KeyPair, utxos, to_address: str, amount: int, fee: int,
                    chain_id: str, change_address: str | None = None,
                    max_inputs: int = 256) -> Transaction:
-    """utxos: [(outpoint, TxOutput)] do remetente. Retorna Transaction assinada."""
+    """utxos: [(outpoint, TxOutput)] of the sender. Returns a signed Transaction."""
     if not is_valid_address(to_address):
-        raise WalletError("endereço de destino inválido")
+        raise WalletError("invalid destination address")
     if amount <= 0 or fee < 0:
-        raise WalletError("valor ou taxa inválidos")
+        raise WalletError("invalid amount or fee")
     need = amount + fee
     chosen, total = [], 0
-    for op, out in sorted(utxos, key=lambda x: (-x[1].value, x[0])):  # maiores primeiro
+    for op, out in sorted(utxos, key=lambda x: (-x[1].value, x[0])):  # largest first
         chosen.append((op, out))
         total += out.value
         if total >= need:
             break
     if total < need:
-        raise InsufficientFunds(f"saldo insuficiente: tem {total}, precisa {need}")
+        raise InsufficientFunds(f"insufficient funds: have {total}, need {need}")
     if len(chosen) > max_inputs:
-        raise WalletError("muitas entradas: consolide as moedas antes")
+        raise WalletError("too many inputs: consolidate the coins first")
     outputs = [TxOutput(amount, to_address)]
     change = total - need
     if change > 0:
@@ -41,15 +41,15 @@ def build_transfer(keypair: KeyPair, utxos, to_address: str, amount: int, fee: i
 def _assemble(signers, utxos, to_address, amount, change_address, chain_id, fee, max_inputs):
     need = amount + fee
     chosen, total = [], 0
-    for op, out in sorted(utxos, key=lambda x: (-x[1].value, x[0])):  # maiores primeiro
+    for op, out in sorted(utxos, key=lambda x: (-x[1].value, x[0])):  # largest first
         chosen.append((op, out))
         total += out.value
         if total >= need:
             break
     if total < need:
-        raise InsufficientFunds(f"saldo insuficiente: tem {total}, precisa {need}")
+        raise InsufficientFunds(f"insufficient funds: have {total}, need {need}")
     if len(chosen) > max_inputs:
-        raise WalletError("muitas entradas: consolide as moedas antes")
+        raise WalletError("too many inputs: consolidate the coins first")
     outputs = [TxOutput(amount, to_address)]
     if total - need > 0:
         outputs.append(TxOutput(total - need, change_address))
@@ -57,7 +57,7 @@ def _assemble(signers, utxos, to_address, amount, change_address, chain_id, fee,
     for op, out in chosen:
         kp = signers.get(out.address)
         if kp is None:
-            raise WalletError("sem chave para um dos endereços de origem")
+            raise WalletError("no key for one of the source addresses")
         keys.append(kp)
     inputs = tuple(TxInput(op[0], op[1], kp.public_hex) for (op, _), kp in zip(chosen, keys))
     tx = Transaction(chain_id, inputs, tuple(outputs))
@@ -68,19 +68,19 @@ def _assemble(signers, utxos, to_address, amount, change_address, chain_id, fee,
 
 def build_payment(signers: dict, utxos, to_address: str, amount: int, change_address: str,
                   chain_id: str, fee: int | None = None, params=None, max_inputs: int = 256):
-    """Pagamento com entradas de vários endereços (cada entrada assinada pela sua chave).
+    """Payment with inputs from several addresses (each input signed by its own key).
 
-    `signers`: {endereço: KeyPair}. O troco vai para `change_address` (use um endereço NOVO).
-    Com `fee=None`, calcula a menor taxa aceita pela rede (exige `params`).
+    `signers`: {address: KeyPair}. The change goes to `change_address` (use a NEW address).
+    With `fee=None`, computes the lowest fee the network accepts (requires `params`).
     """
     if not is_valid_address(to_address) or not is_valid_address(change_address):
-        raise WalletError("endereço inválido")
+        raise WalletError("invalid address")
     if amount <= 0 or (fee is not None and fee < 0):
-        raise WalletError("valor ou taxa inválidos")
+        raise WalletError("invalid amount or fee")
     if fee is not None:
         return _assemble(signers, utxos, to_address, amount, change_address, chain_id, fee, max_inputs)
     if params is None:
-        raise WalletError("informe a taxa ou os parâmetros da rede")
+        raise WalletError("provide the fee or the network parameters")
     trial = params.min_fee
     for _ in range(8):
         tx = _assemble(signers, utxos, to_address, amount, change_address, chain_id, trial, max_inputs)
@@ -88,4 +88,4 @@ def build_payment(signers: dict, utxos, to_address: str, amount: int, change_add
         if trial >= need:
             return tx
         trial = need
-    raise WalletError("não foi possível estimar a taxa")
+    raise WalletError("could not estimate the fee")

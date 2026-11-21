@@ -1,4 +1,4 @@
-# Carteira web (PWA)
+# Web wallet (PWA)
 
-**Ainda não implementada.** Esta pasta existe como reserva. Hoje as carteiras são a CLI (`python -m winflux.cli`) e o
-app Android em `android-wallet/` (versão online, UI ainda não compilada). Ver `docs/testnet.md`.
+**Not implemented yet.** This folder exists as a placeholder. Today the wallets are the CLI (`python -m winflux.cli`) and the
+Android app in `android-wallet/` (online version, UI not yet compiled). See `docs/testnet.md`.

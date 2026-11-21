@@ -12,7 +12,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Bloqueia captura de tela e miniatura em "recentes": a chave de recuperação aparece nesta tela.
+        // Blocks screen capture and the thumbnail in "recents": the recovery key is shown on this screen.
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         setContent { MaterialTheme { WalletApp(vm) } }
     }

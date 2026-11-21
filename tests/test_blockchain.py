@@ -1,4 +1,4 @@
-"""Etapa 1: gênese, encadeamento, validação estrutural, persistência."""
+"""Stage 1: genesis, chaining, structural validation, persistence."""
 import json
 import sqlite3
 from dataclasses import replace
@@ -52,7 +52,7 @@ def test_wrong_prev_hash(chain, keys):
 
 
 def test_wrong_height(chain, keys):
-    with pytest.raises(ValidationError, match="altura"):
+    with pytest.raises(ValidationError, match="height"):
         chain.add_block(_sealed(chain, keys, height=5))
 
 
@@ -62,9 +62,9 @@ def test_bad_merkle(chain, keys):
 
 
 def test_timestamp_rules(chain, keys):
-    with pytest.raises(ValidationError, match="posterior"):
+    with pytest.raises(ValidationError, match="later"):
         chain.add_block(_sealed(chain, keys, timestamp=T0))
-    with pytest.raises(ValidationError, match="futuro"):
+    with pytest.raises(ValidationError, match="future"):
         chain.add_block(_sealed(chain, keys, timestamp=NOW + 100_000))
 
 
@@ -102,7 +102,7 @@ def test_malformed_block_rejected(chain, keys, mutate):
         Block.from_dict(d)
 
 
-# ---------- persistência ----------
+# ---------- persistence ----------
 def test_persistence_roundtrip(keys, tmp_path):
     path = str(tmp_path / "chain.db")
     c1 = make_chain(keys, storage=BlockStorage(path))
@@ -110,7 +110,7 @@ def test_persistence_roundtrip(keys, tmp_path):
     mine(c1, keys)
     tip, supply = c1.tip.hash, c1.total_supply()
     c1.storage.close()
-    c2 = make_chain(keys, storage=BlockStorage(path))  # "reinicialização"
+    c2 = make_chain(keys, storage=BlockStorage(path))  # "restart"
     assert c2.height == 2 and c2.tip.hash == tip and c2.total_supply() == supply
     assert c2.balance(keys["producer"].address) == 100 * WFLX
     mine(c2, keys)
@@ -125,7 +125,7 @@ def test_storage_tampering_detected(keys, tmp_path):
     db = sqlite3.connect(path)
     (data,) = db.execute("SELECT data FROM blocks WHERE height=1").fetchone()
     d = json.loads(data)
-    d["transactions"][0]["outputs"][0]["value"] += 1  # inflar a coinbase no disco
+    d["transactions"][0]["outputs"][0]["value"] += 1  # inflate the coinbase on disk
     db.execute("UPDATE blocks SET data=? WHERE height=1", (json.dumps(d),))
     db.commit()
     db.close()
@@ -139,7 +139,7 @@ def test_storage_garbage_detected(keys, tmp_path):
     mine(c1, keys)
     c1.storage.close()
     db = sqlite3.connect(path)
-    db.execute("UPDATE blocks SET data='{lixo' WHERE height=1")
+    db.execute("UPDATE blocks SET data='{garbage' WHERE height=1")
     db.commit()
     db.close()
     with pytest.raises(StorageError):
@@ -149,5 +149,5 @@ def test_storage_garbage_detected(keys, tmp_path):
 def test_storage_from_other_network_rejected(keys, tmp_path):
     path = str(tmp_path / "chain.db")
     make_chain(keys, storage=BlockStorage(path)).storage.close()
-    with pytest.raises(StorageError, match="gênese"):
+    with pytest.raises(StorageError, match="genesis"):
         make_chain(keys, storage=BlockStorage(path), alloc=((keys["bob"].address, 1 * WFLX),))

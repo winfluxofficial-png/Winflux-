@@ -1,14 +1,14 @@
-"""Cofres offline: estado de consenso, regras de abertura, claim e devolução.
+"""Offline vaults: consensus state, opening, claim and refund rules.
 
-Ver docs/offline-payments.md (Revisão 2). Resumo:
-- `vault_open` trava valor + colateral em N vagas e registra a chave `D` do dispositivo.
-- `voucher_claim` resgata um voucher assinado por `D`: a vaga paga no máximo uma vez; um segundo
-  voucher distinto para a mesma vaga é pago pelo colateral e marca o cofre como fraudulento.
-- `note_claim` (A3) liquida UMA folha-endereço de uma cadeia de notas offline numa vaga com chave própria.
-  A vaga registra quais transações offline já gastaram cada nota; um ramo que contradiz o registrado é
-  conflito (gasto duplo) e é indenizado pelo colateral sob R1-R9, nunca pelo valor em depósito.
-- `vault_refund` devolve o que sobrou depois de `expires_height + claim_window` (colateral queimado
-  se houve fraude). NÃO existe fechamento antecipado.
+See docs/offline-payments.md (Revision 2). Summary:
+- `vault_open` locks value + collateral in N slots and registers the device key `D`.
+- `voucher_claim` redeems a voucher signed by `D`: the slot pays at most once; a second
+  distinct voucher for the same slot is paid by the collateral and marks the vault as fraudulent.
+- `note_claim` (A3) settles ONE address leaf of an offline note chain in a slot with its own key.
+  The slot records which offline transactions have already spent each note; a branch that contradicts the record is a
+  conflict (double spend) and is compensated by the collateral under R1-R9, never by the deposited value.
+- `vault_refund` returns what is left after `expires_height + claim_window` (collateral burned
+  if there was fraud). There is NO early close.
 """
 import copy
 import re
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from ..crypto.address import address_from_hash, is_valid_address
 from ..crypto.hashing import canonical_json, sha256
-from ..crypto.keys import verify_device_signature  # noqa: F401  (reexport p/ validação)
+from ..crypto.keys import verify_device_signature  # noqa: F401  (re-export for validation)
 from ..errors import ValidationError
 from ..offline import note as N
 from ..offline.voucher import Voucher, chain_id_hash
@@ -27,7 +27,7 @@ from .params import ChainParams
 KEY_TYPES = {"ed25519": 32, "p256": 33}
 _HEX = re.compile(r"^[0-9a-f]+$")
 POP_DOMAIN = b"WFLX-VAULT-POP-V1"
-MAX_SETTLED_PER_SLOT = 64   # folhas liquidadas por vaga (limita o estado); constante de consenso
+MAX_SETTLED_PER_SLOT = 64   # settled leaves per slot (bounds state); consensus constant
 NOTE_STATE_TAG = b"WFLX-NOTESTATE-V1"
 
 
@@ -40,15 +40,15 @@ class Slot:
     cap: int
     collateral_left: int
     paid: int = 0
-    claimed_by: str | None = None   # hash do voucher que ocupou a vaga
-    key: str = ""                   # chave própria da vaga (hex); "" = vaga de voucher (chave D do cofre)
-    compensated: int = 0            # soma já indenizada pelo colateral (R2)
-    comp_leaves: list = field(default_factory=list)  # vouchers já indenizados (R3, no máx. R9)
-    spends: dict = field(default_factory=dict)       # notas: nota gasta (hex) -> txid offline que a gastou na cadeia
-    settled: list = field(default_factory=list)      # folhas de nota já liquidadas (hex)
+    claimed_by: str | None = None   # hash of the voucher that occupied the slot
+    key: str = ""                   # slot's own key (hex); "" = voucher slot (vault key D)
+    compensated: int = 0            # sum already compensated by the collateral (R2)
+    comp_leaves: list = field(default_factory=list)  # vouchers already compensated (R3, at most R9)
+    spends: dict = field(default_factory=dict)       # notes: spent note (hex) -> offline txid that spent it on the chain
+    settled: list = field(default_factory=list)      # note leaves already settled (hex)
 
     def note_state_digest(self) -> str:
-        """Compromisso com `spends` + `settled`; vai na raiz de estado via `claimed_by` (formato inalterado)."""
+        """Commitment to `spends` + `settled`; goes in the state root via `claimed_by` (format unchanged)."""
         return sha256(NOTE_STATE_TAG + canonical_json([sorted(self.spends.items()), sorted(self.settled)])).hex()
 
     def locked(self) -> int:
@@ -64,7 +64,7 @@ class Vault:
     opened_height: int
     expires_height: int
     slots: list = field(default_factory=list)
-    state: str = "OPEN"             # OPEN | CLOSED (devolvido)
+    state: str = "OPEN"             # OPEN | CLOSED (refunded)
     fraud: bool = False
 
     def locked(self) -> int:
@@ -82,25 +82,25 @@ class Vault:
 
     @classmethod
     def from_dict(cls, d) -> "Vault":
-        """Inverso de `to_dict` (cliente/CLI lendo a API do nó). Parsing estrito; não é usado pelo consenso."""
+        """Inverse of `to_dict` (client/CLI reading the node API). Strict parsing; not used by consensus."""
         keys = {"vault_id", "refund_address", "device_key", "key_type", "opened_height", "expires_height",
                 "state", "fraud", "slots"}
         if not isinstance(d, dict) or not keys <= set(d):
-            raise ValidationError("cofre malformado")
+            raise ValidationError("malformed vault")
         slots = []
         for r in d["slots"]:
             if not isinstance(r, list) or len(r) != 9:
-                raise ValidationError("vaga malformada")
+                raise ValidationError("malformed slot")
             cap, col, paid, cb, comp, leaves, key, spends, settled = r
             if not all(_is_int(x) and x >= 0 for x in (cap, col, paid, comp)):
-                raise ValidationError("vaga malformada")
+                raise ValidationError("malformed slot")
             if not (isinstance(leaves, list) and isinstance(settled, list) and isinstance(spends, list)
                     and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in spends)):
-                raise ValidationError("vaga malformada")
+                raise ValidationError("malformed slot")
             slots.append(Slot(cap=cap, collateral_left=col, paid=paid, claimed_by=cb, key=key, compensated=comp,
                               comp_leaves=list(leaves), spends={a: b for a, b in spends}, settled=list(settled)))
         if d["state"] not in ("OPEN", "CLOSED") or not isinstance(d["fraud"], bool):
-            raise ValidationError("cofre malformado")
+            raise ValidationError("malformed vault")
         return cls(d["vault_id"], d["refund_address"], d["device_key"], d["key_type"], d["opened_height"],
                    d["expires_height"], slots, d["state"], d["fraud"])
 
@@ -112,7 +112,7 @@ class VaultUndo:
 
 
 class VaultRegistry:
-    """Registro derivado da cadeia (reconstruído na carga), com undo para reorganizações."""
+    """Registry derived from the chain (rebuilt on load), with undo for reorganizations."""
 
     def __init__(self):
         self._v: dict[str, Vault] = {}
@@ -125,7 +125,7 @@ class VaultRegistry:
         return self._v.get(vault_id)
 
     def for_refund_address(self, address: str, limit: int = 100) -> list:
-        """Cofres cujo reembolso vai para `address` (varredura linear; suficiente para a testnet)."""
+        """Vaults whose refund goes to `address` (linear scan; enough for the testnet)."""
         return [v for v in self._v.values() if v.refund_address == address][:limit]
 
     def put(self, vault: Vault) -> VaultUndo:
@@ -150,7 +150,7 @@ class VaultRegistry:
         return {k: self._v[k].to_dict() for k in sorted(self._v)}
 
 
-# ---------------------------------------------------------------- abertura
+# ---------------------------------------------------------------- opening
 @dataclass(frozen=True)
 class VaultOpenSpec:
     device_key: str
@@ -165,57 +165,57 @@ class VaultOpenSpec:
 
 def build_slots(caps, collateral_pct: int, slot_keys=()) -> list:
     return [Slot(cap, (cap * collateral_pct + 99) // 100, key=(slot_keys[i] if slot_keys else ""))
-            for i, cap in enumerate(caps)]  # colateral arredonda p/ cima
+            for i, cap in enumerate(caps)]  # collateral rounds up
 
 
 def parse_vault_open(payload, params: ChainParams) -> VaultOpenSpec:
     keys = {"device_key", "key_type", "slots", "collateral_pct", "ttl_blocks", "refund_address", "pop"}
     if not isinstance(payload, dict) or set(payload) not in (keys, keys | {"slot_keys"}):
-        raise ValidationError("carga útil de vault_open inválida")
+        raise ValidationError("invalid vault_open payload")
     kt = payload["key_type"]
     if not (isinstance(kt, str) and kt in KEY_TYPES):
-        raise ValidationError("tipo de chave de dispositivo não suportado")
+        raise ValidationError("unsupported device key type")
     dk = payload["device_key"]
     if not (isinstance(dk, str) and len(dk) == 2 * KEY_TYPES[kt] and _HEX.match(dk)):
-        raise ValidationError("chave de dispositivo inválida")
+        raise ValidationError("invalid device key")
     caps = payload["slots"]
     if not isinstance(caps, list) or not 1 <= len(caps) <= params.vault_max_slots:
-        raise ValidationError("número de vagas fora do limite")
+        raise ValidationError("number of slots out of range")
     if not all(_is_int(c) and c >= params.min_voucher_value for c in caps):
-        raise ValidationError("teto de vaga abaixo do voucher mínimo")
+        raise ValidationError("slot cap below the minimum voucher")
     pct = payload["collateral_pct"]
     if not (_is_int(pct) and params.vault_collateral_min_pct <= pct <= 1000):
-        raise ValidationError("colateral abaixo do mínimo da rede")
+        raise ValidationError("collateral below the network minimum")
     ttl = payload["ttl_blocks"]
     if not (_is_int(ttl) and params.vault_ttl_min_blocks <= ttl <= params.vault_ttl_max_blocks):
-        raise ValidationError("TTL do cofre fora do intervalo permitido")
+        raise ValidationError("vault TTL outside the allowed range")
     if not is_valid_address(payload["refund_address"]):
-        raise ValidationError("endereço de devolução inválido")
+        raise ValidationError("invalid refund address")
     pop = payload["pop"]
     if not (isinstance(pop, str) and len(pop) == 128 and _HEX.match(pop)):
-        raise ValidationError("prova de posse malformada")
+        raise ValidationError("malformed proof of possession")
     slot_keys = ()
     if "slot_keys" in payload:
         sk = payload["slot_keys"]
         if not isinstance(sk, list) or len(sk) != len(caps):
-            raise ValidationError("slot_keys deve ter uma chave por vaga")
+            raise ValidationError("slot_keys must have one key per slot")
         for k in sk:
             if not (isinstance(k, str) and len(k) == 2 * KEY_TYPES[kt] and _HEX.match(k)):
-                raise ValidationError("chave de vaga inválida")
+                raise ValidationError("invalid slot key")
             if kt == "p256" and k[:2] not in ("02", "03"):
-                raise ValidationError("chave P-256 de vaga deve estar na forma comprimida")
+                raise ValidationError("slot P-256 key must be in compressed form")
         if len(set(sk)) != len(sk):
-            raise ValidationError("chaves de vaga repetidas")
+            raise ValidationError("repeated slot keys")
         slot_keys = tuple(sk)
     spec = VaultOpenSpec(dk, kt, tuple(caps), pct, ttl, payload["refund_address"], pop, slot_keys)
     locked = sum(s.cap + s.collateral_left for s in build_slots(spec.caps, pct))
     if locked > params.vault_max_value:
-        raise ValidationError("valor do cofre acima do máximo permitido")
+        raise ValidationError("vault value above the maximum allowed")
     return spec
 
 
 def pop_message(tx) -> bytes:
-    """Mensagem que a chave `D` assina para provar posse: corpo da tx SEM o campo `pop`."""
+    """Message that key `D` signs to prove possession: the tx body WITHOUT the `pop` field."""
     body = tx.body()
     payload = dict(body["payload"])
     payload.pop("pop", None)
@@ -238,37 +238,37 @@ def claim_deadline(vault: Vault, params: ChainParams) -> int:
 
 def parse_claim_payload(payload) -> Voucher:
     if not isinstance(payload, dict) or set(payload) != {"voucher"}:
-        raise ValidationError("carga útil de voucher_claim inválida")
+        raise ValidationError("invalid voucher_claim payload")
     h = payload["voucher"]
     if not (isinstance(h, str) and len(h) == 350 and _HEX.match(h)):
-        raise ValidationError("voucher malformado")
+        raise ValidationError("malformed voucher")
     return Voucher.from_bytes(bytes.fromhex(h))
 
 
 def plan_claim(vault: Vault, v: Voucher, params: ChainParams, height: int | None) -> ClaimPlan:
-    """Aplica todas as regras do voucher. `height=None` pula só o prazo (uso do construtor de tx)."""
+    """Applies all voucher rules. `height=None` skips only the deadline (used by the tx builder)."""
     if v.chain_id_hash != chain_id_hash(params.chain_id):
-        raise ValidationError("voucher de outra rede")
+        raise ValidationError("voucher from another network")
     if vault.state != "OPEN":
-        raise ValidationError("cofre já encerrado")
+        raise ValidationError("vault already closed")
     if height is not None and height > claim_deadline(vault, params):
-        raise ValidationError("prazo de claim encerrado")
+        raise ValidationError("claim deadline passed")
     if v.slot >= len(vault.slots):
-        raise ValidationError("vaga inexistente")
+        raise ValidationError("nonexistent slot")
     slot = vault.slots[v.slot]
     if slot.key:
-        raise ValidationError("vaga com chave própria só pode ser liquidada por nota (note_claim)")
+        raise ValidationError("a slot with its own key can only be settled by note (note_claim)")
     if not params.min_voucher_value <= v.amount <= slot.cap:
-        raise ValidationError("valor do voucher fora dos limites da vaga")
+        raise ValidationError("voucher value outside the slot's limits")
     if not verify_device_signature(vault.key_type, bytes.fromhex(vault.device_key),
                                    v.signature, v.signing_message()):
-        raise ValidationError("assinatura do voucher inválida")
+        raise ValidationError("invalid voucher signature")
     vh = v.hash
     if slot.claimed_by is None:
         return ClaimPlan(v.slot, v.amount, False, vh)
     if slot.claimed_by == vh:
-        raise ValidationError("voucher já liquidado")
-    # Conflito: indenização pelo colateral, sob os limites determinísticos de exposure.py.
+        raise ValidationError("voucher already settled")
+    # Conflict: compensation by the collateral, under the deterministic limits of exposure.py.
     payout = plan_compensation(
         collateral_left=slot.collateral_left, compensated_total=slot.compensated,
         contested_value=slot.cap, paid_leaves=slot.comp_leaves,
@@ -306,71 +306,71 @@ class NoteClaimPlan:
     slot: int
     leaf_id: str            # hex
     leaf_value: int
-    payout: int             # sai do depósito (sem conflito) ou do colateral (conflito)
+    payout: int             # comes out of the deposit (no conflict) or out of the collateral (conflict)
     address: str
     from_collateral: bool
-    new_spends: tuple       # ((nota_hex, txid_hex), ...) a registrar (vazio em conflito)
+    new_spends: tuple       # ((note_hex, txid_hex), ...) to record (empty on conflict)
 
 
 def parse_note_claim(payload) -> NoteClaimSpec:
-    """Parsing estrito: campos extras, tipos errados, hex malformado => ValidationError."""
+    """Strict parsing: extra fields, wrong types, malformed hex => ValidationError."""
     if not isinstance(payload, dict) or set(payload) != {"vault_id", "slot", "leaf", "hops"}:
-        raise ValidationError("carga útil de note_claim inválida")
+        raise ValidationError("invalid note_claim payload")
     vid = payload["vault_id"]
     if not (isinstance(vid, str) and len(vid) == 64 and _HEX.match(vid)):
-        raise ValidationError("vault_id inválido")
+        raise ValidationError("invalid vault_id")
     for k, hi in (("slot", 65536), ("leaf", N.MAX_OUTPUTS)):
         if not _is_int(payload[k]) or not 0 <= payload[k] < hi:
-            raise ValidationError(f"{k} inválido")
+            raise ValidationError(f"invalid {k}")
     raw = payload["hops"]
     if not isinstance(raw, list) or not 1 <= len(raw) <= N.MAX_HOPS:
-        raise ValidationError("cadeia de saltos inválida")
+        raise ValidationError("invalid chain of hops")
     hops = []
     for h in raw:
         if not isinstance(h, dict) or set(h) != {"tx", "key_type", "pubkey", "sig"}:
-            raise ValidationError("salto malformado")
+            raise ValidationError("malformed hop")
         try:
-            hops.append(N.Hop.from_dict({**h, "att": None}))   # atestação não é consenso: sempre None
+            hops.append(N.Hop.from_dict({**h, "att": None}))   # attestation is not consensus: always None
         except ValidationError:
             raise
         except (ValueError, TypeError, struct_error):
-            raise ValidationError("salto malformado") from None
+            raise ValidationError("malformed hop") from None
     return NoteClaimSpec(vid, payload["slot"], payload["leaf"], tuple(hops))
 
 
 def plan_note_claim(vault: Vault, spec: NoteClaimSpec, params: ChainParams, height: int | None) -> NoteClaimPlan:
-    """Todas as regras do `note_claim`. `height=None` pula só o prazo (uso do construtor de tx)."""
+    """All the rules of `note_claim`. `height=None` skips only the deadline (used by the tx builder)."""
     if vault.state != "OPEN":
-        raise ValidationError("cofre já encerrado")
+        raise ValidationError("vault already closed")
     if height is not None and height > claim_deadline(vault, params):
-        raise ValidationError("prazo de claim encerrado")
+        raise ValidationError("claim deadline passed")
     if spec.slot >= len(vault.slots):
-        raise ValidationError("vaga inexistente")
+        raise ValidationError("nonexistent slot")
     slot = vault.slots[spec.slot]
     if not slot.key:
-        raise ValidationError("vaga sem chave própria: use voucher_claim")
+        raise ValidationError("slot without its own key: use voucher_claim")
     chk = N.verify_hop_chain(spec.hops, chain_hash=chain_id_hash(params.chain_id), vault_id=vault.vault_id,
                              slot=spec.slot, cap=slot.cap, root_key_type=vault.key_type,
                              root_key_hex=slot.key, leaf=spec.leaf)
     if chk.leaf.kind != N.KIND_ADDRESS:
-        raise ValidationError("só uma folha do tipo endereço pode ser liquidada")
+        raise ValidationError("only an address-type leaf can be settled")
     floor = max(params.min_voucher_value, params.min_fee + 1)
     if chk.leaf.value < floor:
-        raise ValidationError("valor da folha abaixo do mínimo liquidável")
+        raise ValidationError("leaf value below the minimum settleable amount")
     lid = chk.leaf_id.hex()
     if lid in slot.settled or lid in slot.comp_leaves:
-        raise ValidationError("folha já liquidada")                                          # R3
+        raise ValidationError("leaf already settled")                                          # R3
     address = address_from_hash(chk.leaf.owner[:20])
     conflict = any(slot.spends.get(note, txid) != txid for note, txid in chk.links)
     if not conflict:
         if len(slot.settled) >= MAX_SETTLED_PER_SLOT:
-            raise ValidationError("limite de folhas liquidadas da vaga atingido")
-        if slot.paid + chk.leaf.value > slot.cap:       # inalcançável com a conservação; defesa de consenso
-            raise ValidationError("liquidação excede o valor da vaga")
+            raise ValidationError("slot limit of settled leaves reached")
+        if slot.paid + chk.leaf.value > slot.cap:       # unreachable given conservation; consensus defense
+            raise ValidationError("settlement exceeds the slot's value")
         new = tuple((n, t) for n, t in chk.links if n not in slot.spends)
         return NoteClaimPlan(vault.vault_id, spec.slot, lid, chk.leaf.value, chk.leaf.value, address, False, new)
-    # Conflito: algum salto gasta uma nota já gasta de outra forma na cadeia. O ramo perdedor é indenizado
-    # pelo colateral sob R1-R9 e NÃO é registrado (seus descendentes continuam conflitando).
+    # Conflict: some hop spends a note already spent differently on the chain. The losing branch is compensated
+    # by the collateral under R1-R9 and is NOT recorded (its descendants keep conflicting).
     payout = plan_compensation(
         collateral_left=slot.collateral_left, compensated_total=slot.compensated, contested_value=slot.cap,
         paid_leaves=slot.comp_leaves, max_events=params.max_compensations_per_slot, leaf_id=lid,
@@ -395,20 +395,20 @@ def apply_note_claim(vault: Vault, plan: NoteClaimPlan) -> Vault:
     return new
 
 
-# ---------------------------------------------------------------- devolução
+# ---------------------------------------------------------------- refund
 @dataclass(frozen=True)
 class RefundPlan:
-    total: int     # devolvido ao dono antes da taxa
+    total: int     # returned to the owner before the fee
     fee: int
     payout: int
-    burn: int      # colateral queimado (fraude)
+    burn: int      # collateral burned (fraud)
 
 
 def plan_refund(vault: Vault, params: ChainParams, height: int | None) -> RefundPlan:
     if vault.state != "OPEN":
-        raise ValidationError("cofre já encerrado")
+        raise ValidationError("vault already closed")
     if height is not None and height <= claim_deadline(vault, params):
-        raise ValidationError("janela de claims ainda aberta")
+        raise ValidationError("claims window still open")
     cap_left = sum(s.cap - s.paid for s in vault.slots)
     col = sum(s.collateral_left for s in vault.slots)
     burn = col if vault.fraud else 0
@@ -419,8 +419,8 @@ def plan_refund(vault: Vault, params: ChainParams, height: int | None) -> Refund
 
 def parse_refund_payload(payload) -> str:
     if not isinstance(payload, dict) or set(payload) != {"vault_id"}:
-        raise ValidationError("carga útil de vault_refund inválida")
+        raise ValidationError("invalid vault_refund payload")
     vid = payload["vault_id"]
     if not (isinstance(vid, str) and len(vid) == 64 and _HEX.match(vid)):
-        raise ValidationError("vault_id inválido")
+        raise ValidationError("invalid vault_id")
     return vid

@@ -1,10 +1,10 @@
-"""Carteira hierárquica determinística (HD) com chave de recuperação.
+"""Deterministic hierarchical (HD) wallet with a recovery key.
 
-Cada endereço vem de uma semente-mestra por HKDF-SHA256 (derivação "endurecida":
-conhecer um endereço/chave filha não revela a mestra nem as irmãs). O troco vai
-sempre para um endereço novo: assim cada endereço costuma ser gasto uma única vez,
-o que melhora a privacidade e limita a exposição da chave pública (relevante contra
-ataques quânticos, ver docs).
+Each address comes from a master seed through HKDF-SHA256 ("hardened" derivation:
+knowing a child address/key reveals neither the master nor the siblings). Change always
+goes to a new address: this way each address tends to be spent only once,
+which improves privacy and limits public-key exposure (relevant against
+quantum attacks, see docs).
 """
 import base64
 import os
@@ -24,39 +24,39 @@ RECOVERY_PREFIX = "wflxk1-"
 
 def derive_seed(master: bytes, index: int) -> bytes:
     if not 0 <= index < 2**31:
-        raise ValueError("índice fora do intervalo")
+        raise ValueError("index out of range")
     return HKDF(algorithm=hashes.SHA256(), length=32, salt=b"WFLX-HD-SALT-V1",
                 info=b"WFLX-HD-V1/" + index.to_bytes(4, "big")).derive(master)
 
 
 def encode_recovery_key(seed: bytes) -> str:
     if len(seed) != 32:
-        raise ValueError("semente deve ter 32 bytes")
+        raise ValueError("seed must be 32 bytes")
     raw = seed + sha256(b"WFLX-RECOVERY-V1" + seed)[:4]
     b32 = base64.b32encode(raw).decode("ascii").lower().rstrip("=")
     return RECOVERY_PREFIX + "-".join(b32[i:i + 4] for i in range(0, len(b32), 4))
 
 
 def decode_recovery_key(text: str) -> bytes:
-    t = "".join(text.lower().replace("-", " ").split())  # tolera hífens, espaços e maiúsculas
+    t = "".join(text.lower().replace("-", " ").split())  # tolerates hyphens, spaces and uppercase
     prefix = RECOVERY_PREFIX.rstrip("-")
     if not t.startswith(prefix):
-        raise WalletError("chave de recuperação com prefixo inválido")
+        raise WalletError("recovery key with invalid prefix")
     body = t[len(prefix):]
     try:
         raw = base64.b32decode(body.upper() + "=" * (-len(body) % 8))
     except Exception:
-        raise WalletError("chave de recuperação malformada") from None
+        raise WalletError("malformed recovery key") from None
     canonical = base64.b32encode(raw).decode("ascii").lower().rstrip("=")
     if len(raw) != 36 or body != canonical or raw[32:] != sha256(b"WFLX-RECOVERY-V1" + raw[:32])[:4]:
-        raise WalletError("chave de recuperação inválida (erro de digitação?)")
+        raise WalletError("invalid recovery key (typo?)")
     return raw[:32]
 
 
 class HDWallet:
     def __init__(self, master_seed: bytes, next_index: int = 0):
         if not isinstance(master_seed, (bytes, bytearray)) or len(master_seed) != 32:
-            raise ValueError("semente-mestra deve ter 32 bytes")
+            raise ValueError("master seed must be 32 bytes")
         self._master = bytes(master_seed)
         self.next_index = next_index
         self._cache: dict[int, KeyPair] = {}
@@ -71,7 +71,7 @@ class HDWallet:
 
     @classmethod
     def from_wallet(cls, wallet: Wallet) -> "HDWallet":
-        """Usa a semente do keystore existente como mestra (o endereço legado não é usado)."""
+        """Uses the existing keystore's seed as the master (the legacy address is not used)."""
         return cls(wallet.keypair.seed)
 
     def recovery_key(self) -> str:
@@ -86,13 +86,13 @@ class HDWallet:
         return self.keypair(index).address
 
     def new_address(self) -> str:
-        """Próximo endereço de recebimento (nunca reutiliza)."""
+        """Next receiving address (never reuses)."""
         a = self.address(self.next_index)
         self.next_index += 1
         return a
 
     def discover(self, chain, gap: int = GAP_LIMIT) -> None:
-        """Recupera `next_index` a partir da cadeia (útil após restaurar pela chave de recuperação)."""
+        """Recovers `next_index` from the chain (useful after restoring from the recovery key)."""
         i, last_used, misses = 0, -1, 0
         while misses < gap:
             if chain.address_seen(self.address(i)):
@@ -115,14 +115,14 @@ class HDWallet:
         return sum(chain.balance(self.address(i)) for i in range(self._scan_limit()))
 
     def pay(self, chain, to_address: str, amount: int, fee: int | None = None):
-        """Monta e assina um pagamento; o troco vai para um endereço novo.
+        """Builds and signs a payment; the change goes to a new address.
 
-        Limitação: não rastreia pagamentos pendentes (mempool); duas chamadas antes de
-        incluir o primeiro em bloco podem escolher as mesmas moedas.
+        Limitation: it does not track pending payments (mempool); two calls before
+        the first one is included in a block may pick the same coins.
         """
         signers = {self.address(i): self.keypair(i) for i in range(self._scan_limit())}
-        # Nunca reutiliza: pula endereços que já aparecem na cadeia (ex.: carteira restaurada
-        # sem `discover`, ou endereço de recebimento entregue sem passar por `new_address`).
+        # Never reuses: skips addresses that already appear on the chain (e.g. a wallet restored
+        # without `discover`, or a receiving address handed out without going through `new_address`).
         idx = self.next_index
         while chain.address_seen(self.address(idx)):
             idx += 1

@@ -1,4 +1,4 @@
-"""A3: `note_claim` — liquidação on-chain de cadeias de notas offline (sucesso, conflito, R1-R9, adulteração, fuzz)."""
+"""A3: `note_claim` — on-chain settlement of offline note chains (success, conflict, R1-R9, tampering, fuzz)."""
 import copy
 import json
 import random
@@ -51,7 +51,7 @@ def rejects(w, tx, match=None):
         w.chain.ledger.check(tx, w.chain.height + 1)
 
 
-# ================================================================== sucesso
+# ================================================================== success
 def test_direct_claim_pays_the_address_and_updates_slot_and_supply(w, keys):
     supply = w.chain.total_supply()
     before = w.chain.balance(keys["bob"].address)
@@ -61,7 +61,7 @@ def test_direct_claim_pays_the_address_and_updates_slot_and_supply(w, keys):
     s = slot_of(w)
     assert s.paid == CAP and len(s.settled) == 1 and len(s.spends) == 1 and s.claimed_by == s.note_state_digest()
     assert not w.chain.get_vault(w.vid).fraud
-    assert w.chain.total_supply() == supply + 50 * WFLX            # só a recompensa do bloco (a taxa vai ao minerador)
+    assert w.chain.total_supply() == supply + 50 * WFLX            # only the block reward (the fee goes to the miner)
     assert w.chain.ledger.state_root() != root
 
 
@@ -75,7 +75,7 @@ def test_chain_alice_bob_carlos_dave_settles_the_final_leaf(w, keys):
     claim(w, p4)
     assert w.chain.balance(keys["carol"].address) == 20 * WFLX - FEE
     assert len(slot_of(w).spends) == 4 and slot_of(w).paid == 20 * WFLX
-    claim(w, replace(p4, leaf=1))                                  # a outra folha da mesma cadeia: sem conflito
+    claim(w, replace(p4, leaf=1))                                  # the other leaf of the same chain: no conflict
     assert w.chain.balance(keys["bob"].address) >= 10 * WFLX - FEE
     s = slot_of(w)
     assert s.paid == CAP and len(s.settled) == 2 and not w.chain.get_vault(w.vid).fraud and s.compensated == 0
@@ -104,45 +104,45 @@ def test_two_independent_slots_do_not_interfere(w, keys):
 
 def test_claim_can_be_submitted_by_anyone_and_output_is_fixed(w, keys):
     tx = claim(w, direct(w, keys["bob"].address), mine_it=False)
-    rejects(w, replace(tx, outputs=(TxOutput(tx.outputs[0].value, keys["mallory"].address),)), "não confere")
-    rejects(w, replace(tx, outputs=(TxOutput(tx.outputs[0].value + 1, keys["bob"].address),)), "não confere")
+    rejects(w, replace(tx, outputs=(TxOutput(tx.outputs[0].value, keys["mallory"].address),)), "does not match")
+    rejects(w, replace(tx, outputs=(TxOutput(tx.outputs[0].value + 1, keys["bob"].address),)), "does not match")
     assert w.chain.check_transaction(tx) == FEE
 
 
-# ================================================================== reapresentação / tipo de folha / prazo / tipo de vaga
+# ================================================================== resubmission / leaf type / deadline / vault type
 def test_replay_of_a_settled_leaf_is_rejected_and_not_compensated(w, keys):
     pay = direct(w, keys["bob"].address)
     claim(w, pay)
-    with pytest.raises(ValidationError, match="já liquidada"):
+    with pytest.raises(ValidationError, match="already settled"):
         build_note_claim(pay, w.chain.get_vault(w.vid), w.chain.params)
     assert slot_of(w).compensated == 0 and slot_of(w).comp_leaves == []
 
 
 def test_only_address_leaves_settle(w, keys):
     bob = soft(11, w.key_type)
-    with pytest.raises(ValidationError, match="endereço"):
+    with pytest.raises(ValidationError, match="address"):
         build_note_claim(w.first(bob, R[0]), w.chain.get_vault(w.vid), w.chain.params)
 
 
 def test_dust_leaf_is_not_claimable(w, keys):
     pay = w.first(None, R[0], outputs=[addr_out(CAP - 5, keys["bob"].address), addr_out(5, keys["carol"].address)])
-    with pytest.raises(ValidationError, match="mínimo"):
+    with pytest.raises(ValidationError, match="minimum"):
         build_note_claim(replace(pay, leaf=1), w.chain.get_vault(w.vid), w.chain.params)
-    claim(w, pay)                                                  # a folha grande continua liquidável
+    claim(w, pay)                                                  # the large leaf is still settleable
 
 
 def test_deadline_closed_vault_and_unkeyed_vault(keys, kt):
     w = World(keys, key_type=kt, cap=CAP, software_slots=True)
     tx = claim(w, direct(w, keys["bob"].address), mine_it=False)
     advance(w.chain, keys, V.claim_deadline(w.chain.get_vault(w.vid), w.chain.params) - w.chain.height - 1)
-    w.chain.check_transaction(tx)                                  # o bloco seguinte é o último em que ainda vale
+    w.chain.check_transaction(tx)                                  # the next block is the last one in which it is still valid
     advance(w.chain, keys, 1)
-    rejects(w, tx, "prazo")
+    rejects(w, tx, "deadline")
     mine(w.chain, keys, [build_vault_refund(w.chain.get_vault(w.vid), w.chain.params)])
-    rejects(w, tx, "encerrado")
-    u = World(keys, key_type=kt, cap=CAP, with_slot_keys=False)    # vaga de voucher (sem chave própria)
+    rejects(w, tx, "closed")
+    u = World(keys, key_type=kt, cap=CAP, with_slot_keys=False)    # voucher slot (without its own key)
     pay = N.OfflinePayment(u.proof(0), 0, (tx_hop(u, keys),), 0)
-    with pytest.raises(ValidationError, match="sem chave própria"):
+    with pytest.raises(ValidationError, match="without its own key"):
         build_note_claim(pay, u.chain.get_vault(u.vid), u.chain.params)
 
 
@@ -158,28 +158,28 @@ def test_voucher_route_stays_closed_for_keyed_slots(w, keys):
                             w.chain.get_vault(w.vid), w.chain.params)
 
 
-# ================================================================== conflito (gasto duplo) e R1-R9
+# ================================================================== conflict (double spend) and R1-R9
 def test_double_spend_of_root_first_is_paid_loser_by_collateral(w, keys):
     claim(w, direct(w, keys["bob"].address, req=R[0]))
     s = slot_of(w)
     spends, supply = dict(s.spends), w.chain.total_supply()
-    loser = direct(w, keys["carol"].address, req=R[1])             # Alice gastou a raiz de novo
+    loser = direct(w, keys["carol"].address, req=R[1])             # Alice spent the root again
     claim(w, loser)
     s = slot_of(w)
     assert w.chain.get_vault(w.vid).fraud and s.compensated == CAP and s.collateral_left == 0
-    assert s.paid == CAP and s.spends == spends and len(s.comp_leaves) == 1   # ramo perdedor NÃO é registrado
+    assert s.paid == CAP and s.spends == spends and len(s.comp_leaves) == 1   # losing branch is NOT recorded
     assert w.chain.balance(keys["carol"].address) == CAP - FEE
     assert w.chain.total_supply() == supply + 50 * WFLX
-    with pytest.raises(ValidationError):                            # R3 (já indenizada) / R1 (colateral esgotado)
+    with pytest.raises(ValidationError):                            # R3 (already compensated) / R1 (collateral exhausted)
         build_note_claim(loser, w.chain.get_vault(w.vid), w.chain.params)
 
 
 def test_r1_r2_total_compensation_never_exceeds_the_contested_value(w, keys):
-    claim(w, direct(w, keys["bob"].address, req=R[0]))              # vencedor: 30
+    claim(w, direct(w, keys["bob"].address, req=R[0]))              # winner: 30
     split = w.first(None, R[1], outputs=[addr_out(10 * WFLX, keys["carol"].address),
                                          addr_out(20 * WFLX, keys["mallory"].address)])
-    claim(w, split)                                                 # 10 do colateral
-    claim(w, replace(split, leaf=1))                                # 20 do colateral
+    claim(w, split)                                                 # 10 of the collateral
+    claim(w, replace(split, leaf=1))                                # 20 of the collateral
     assert slot_of(w).compensated == CAP and slot_of(w).collateral_left == 0
     third = direct(w, keys["alice"].address, req=R[2])
     with pytest.raises(ValidationError):
@@ -195,7 +195,7 @@ def test_r9_limit_on_compensation_events(keys, kt):
     split = w.first(None, R[1], outputs=outs)
     claim(w, replace(split, leaf=0))
     claim(w, replace(split, leaf=1))
-    with pytest.raises(ValidationError, match="limite de indenizações"):
+    with pytest.raises(ValidationError, match="compensation limit"):
         build_note_claim(replace(split, leaf=2), w.chain.get_vault(w.vid), w.chain.params)
     assert len(slot_of(w).comp_leaves) == 2
 
@@ -204,11 +204,11 @@ def test_double_spend_by_an_intermediate_holder_is_a_conflict_at_that_hop(w, key
     bob, carlos, dave = soft(11, w.key_type), soft(12, w.key_type), soft(13, w.key_type)
     p1 = w.first(bob, R[0])
     to_carlos = w.forward(p1, bob, [addr_out(CAP, keys["carol"].address)], R[1])
-    to_dave = w.forward(p1, bob, [addr_out(CAP, keys["mallory"].address)], R[2])   # Bob gasta a mesma nota 2x
+    to_dave = w.forward(p1, bob, [addr_out(CAP, keys["mallory"].address)], R[2])   # Bob spends the same note twice
     claim(w, to_carlos)
     s = slot_of(w)
     assert s.paid == CAP and not w.chain.get_vault(w.vid).fraud and len(s.spends) == 2
-    claim(w, to_dave)                                               # compartilha T1, conflita em T2
+    claim(w, to_dave)                                               # shares T1, conflicts at T2
     s = slot_of(w)
     assert w.chain.get_vault(w.vid).fraud and s.compensated == CAP and len(s.spends) == 2
     assert w.chain.balance(keys["mallory"].address) == CAP - FEE
@@ -217,18 +217,18 @@ def test_double_spend_by_an_intermediate_holder_is_a_conflict_at_that_hop(w, key
 def test_descendants_of_a_losing_branch_keep_conflicting(w, keys):
     claim(w, direct(w, keys["bob"].address, req=R[0]))
     eve = soft(15, w.key_type)
-    p1 = w.first(eve, R[1])                                         # ramo perdedor (outra gasto da raiz)
+    p1 = w.first(eve, R[1])                                         # losing branch (another spend of the root)
     deep = w.forward(p1, eve, [addr_out(10 * WFLX, keys["carol"].address), addr_out(20 * WFLX, keys["mallory"].address)],
                      R[2])
     claim(w, deep)
     assert slot_of(w).paid == CAP and slot_of(w).compensated == 10 * WFLX
     claim(w, replace(deep, leaf=1))
     assert slot_of(w).compensated == CAP and slot_of(w).paid == CAP
-    assert sum(1 for k in slot_of(w).spends) == 1                   # só a raiz do vencedor
+    assert sum(1 for k in slot_of(w).spends) == 1                   # only the winner's root
 
 
 def test_losing_branch_first_then_winner_is_paid_by_collateral_in_chain_order(w, keys):
-    """Ordem de pagamento = ordem na cadeia (R5): quem entra primeiro vence, independentemente de quem é 'honesto'."""
+    """Payment order = order in the chain (R5): whoever gets in first wins, regardless of who is 'honest'."""
     claim(w, direct(w, keys["mallory"].address, req=R[1]))
     claim(w, direct(w, keys["bob"].address, req=R[0]))
     assert w.chain.balance(keys["mallory"].address) >= CAP - FEE and w.chain.balance(keys["bob"].address) == CAP - FEE
@@ -239,7 +239,7 @@ def test_settled_leaf_cap_per_slot_is_enforced(keys, kt):
     chain_signers = [soft(30 + i, kt) for i in range(5)]
     pay = w.first(chain_signers[0], R[0])
     leaves = 0
-    for i in range(4):                                              # cada salto: 3 folhas-endereço + 1 nota
+    for i in range(4):                                              # each hop: 3 address leaves + 1 note
         outs = [addr_out(2 * WFLX, keys["bob"].address)] * 3
         rest = pay.hops[-1].tx.outputs[pay.leaf].value - 6 * WFLX
         pay = w.forward(pay, chain_signers[i], outs + [note_out(rest, chain_signers[i + 1])], bytes([i + 1]) * 16, leaf=3)
@@ -250,7 +250,7 @@ def test_settled_leaf_cap_per_slot_is_enforced(keys, kt):
     assert len(slot_of(w).settled) == leaves == 12 <= V.MAX_SETTLED_PER_SLOT
 
 
-# ================================================================== adulteração (cada defeito => ValidationError)
+# ================================================================== tampering (each defect => ValidationError)
 def _base(w, keys):
     bob, carlos = soft(11, w.key_type), soft(12, w.key_type)
     p1 = w.first(bob, R[0])
@@ -304,12 +304,12 @@ def _payload(pay, vid):
 def test_wrong_signers_and_wrong_owners(w, keys, kt):
     bob, mallory = soft(11, kt), soft(14, kt)
     p1 = w.first(bob, R[0])
-    forged_first = w.first(bob, R[0], signer=mallory)                     # não é a chave da vaga
-    with pytest.raises(ValidationError, match="dona"):
+    forged_first = w.first(bob, R[0], signer=mallory)                     # is not the slot's key
+    with pytest.raises(ValidationError, match="owner"):
         V.plan_note_claim(w.chain.get_vault(w.vid), V.parse_note_claim(_payload(forged_first, w.vid)),
                           w.chain.params, None)
-    stolen = w.forward(p1, mallory, [addr_out(CAP, keys["mallory"].address)], R[1])  # Mallory gasta nota do Bob
-    with pytest.raises(ValidationError, match="dona"):
+    stolen = w.forward(p1, mallory, [addr_out(CAP, keys["mallory"].address)], R[1])  # Mallory spends Bob's note
+    with pytest.raises(ValidationError, match="owner"):
         build_note_claim(stolen, w.chain.get_vault(w.vid), w.chain.params)
 
 
@@ -318,15 +318,15 @@ def test_value_conservation_and_foreign_network(w, keys):
     hop = pay.hops[0]
     inflated = N.make_hop(chain_hash=w.chash(), vault_id=w.vid, input_note=N.root_note_id(w.vid, 0), input_value=CAP,
                           outputs=[addr_out(CAP + 1, keys["bob"].address)], request_id=R[0], signer=w.slot_signers[0])
-    with pytest.raises(ValidationError, match="conserva"):
+    with pytest.raises(ValidationError, match="conserved"):
         build_note_claim(replace(pay, hops=(inflated,)), w.chain.get_vault(w.vid), w.chain.params)
     other_net = N.make_hop(chain_hash=b"\x09" * 32, vault_id=w.vid, input_note=N.root_note_id(w.vid, 0), input_value=CAP,
                            outputs=[addr_out(CAP, keys["bob"].address)], request_id=R[0], signer=w.slot_signers[0])
-    with pytest.raises(ValidationError, match="outra rede"):
+    with pytest.raises(ValidationError, match="another network"):
         build_note_claim(replace(pay, hops=(other_net,)), w.chain.get_vault(w.vid), w.chain.params)
     wrong_value = N.make_hop(chain_hash=w.chash(), vault_id=w.vid, input_note=N.root_note_id(w.vid, 0), input_value=CAP - 1,
                              outputs=[addr_out(CAP - 1, keys["bob"].address)], request_id=R[0], signer=w.slot_signers[0])
-    with pytest.raises(ValidationError, match="esperada"):
+    with pytest.raises(ValidationError, match="expected"):
         build_note_claim(replace(pay, hops=(wrong_value,)), w.chain.get_vault(w.vid), w.chain.params)
     assert hop.tx.outputs[0].value == CAP
 
@@ -334,16 +334,16 @@ def test_value_conservation_and_foreign_network(w, keys):
 def test_chain_must_follow_a_note_output(w, keys):
     bob = soft(11, w.key_type)
     p1 = w.first(None, R[0], outputs=[addr_out(10 * WFLX, keys["carol"].address), note_out(20 * WFLX, bob)])
-    p_bad = w.forward(p1, bob, [addr_out(10 * WFLX, keys["bob"].address)], R[1], spend=0)   # gasta saída-endereço
+    p_bad = w.forward(p1, bob, [addr_out(10 * WFLX, keys["bob"].address)], R[1], spend=0)   # spends an address output
     with pytest.raises(ValidationError):
         build_note_claim(p_bad, w.chain.get_vault(w.vid), w.chain.params)
     ok = w.forward(p1, bob, [addr_out(20 * WFLX, keys["bob"].address)], R[1], spend=1)
     claim(w, ok)
-    claim(w, replace(p1, hops=p1.hops, leaf=0))                      # a folha-endereço do 1º salto também é liquidável
+    claim(w, replace(p1, hops=p1.hops, leaf=0))                      # the address leaf of the 1st hop is also settleable
     assert slot_of(w).paid == CAP and not w.chain.get_vault(w.vid).fraud
 
 
-# ================================================================== fuzz estrutural
+# ================================================================== structural fuzz
 def test_fuzz_payload_mutations_only_raise_validation_error(w, keys):
     _, tx = _base(w, keys)
     rng = random.Random(7)
@@ -387,7 +387,7 @@ def test_fuzz_payload_mutations_only_raise_validation_error(w, keys):
             pass
 
 
-# ================================================================== atomicidade, undo, determinismo
+# ================================================================== atomicity, undo, determinism
 def test_ledger_undo_restores_exact_state_for_win_and_conflict(w, keys):
     for pay in (direct(w, keys["bob"].address, req=R[0]), direct(w, keys["carol"].address, req=R[1])):
         snap, utxos, supply, root = (w.chain.vaults.snapshot(), len(w.chain.utxo), w.chain.total_supply(),
@@ -407,7 +407,7 @@ def test_two_nodes_replay_to_identical_state_and_root(w, keys):
     p1 = w.first(bob, R[0])
     pay = w.forward(p1, bob, [addr_out(10 * WFLX, keys["carol"].address), addr_out(20 * WFLX, keys["bob"].address)], R[1])
     claim(w, pay)
-    claim(w, direct(w, keys["mallory"].address, req=R[2]))          # conflito
+    claim(w, direct(w, keys["mallory"].address, req=R[2]))          # conflict
     claim(w, replace(pay, leaf=1))
     to_deadline(w.chain, keys, w.vid)
     advance(w.chain, keys, 1)
@@ -452,12 +452,12 @@ def test_transaction_survives_json_and_parse_roundtrip(w, keys):
 
 
 def test_r2_caps_compensation_at_the_contested_value_even_with_surplus_collateral(keys, kt):
-    w = World(keys, key_type=kt, cap=CAP, software_slots=True, pct=200)        # colateral = 2 x cap
+    w = World(keys, key_type=kt, cap=CAP, software_slots=True, pct=200)        # collateral = 2 x cap
     claim(w, direct(w, keys["bob"].address, req=R[0]))
-    claim(w, direct(w, keys["carol"].address, req=R[1]))                        # 30 do colateral (sobram 30)
+    claim(w, direct(w, keys["carol"].address, req=R[1]))                        # 30 of the collateral (30 left)
     s = slot_of(w)
     assert s.compensated == CAP and s.collateral_left == CAP
-    with pytest.raises(ValidationError, match="valor contestado"):
+    with pytest.raises(ValidationError, match="contested value"):
         build_note_claim(direct(w, keys["mallory"].address, req=R[2]), w.chain.get_vault(w.vid), w.chain.params)
 
 
@@ -467,7 +467,7 @@ def test_settled_leaves_per_slot_are_capped(keys, kt, monkeypatch):
     pay = w.first(None, R[0], outputs=[addr_out(10 * WFLX, keys["bob"].address)] * 3)
     claim(w, replace(pay, leaf=0))
     claim(w, replace(pay, leaf=1))
-    with pytest.raises(ValidationError, match="limite de folhas"):
+    with pytest.raises(ValidationError, match="limit of settled leaves"):
         build_note_claim(replace(pay, leaf=2), w.chain.get_vault(w.vid), w.chain.params)
 
 

@@ -1,73 +1,73 @@
-# Princípio de descentralização da Winflux
+# Winflux's decentralization principle
 
-A Winflux é um protocolo monetário aberto, público e *permissionless*. Não possui proprietário, administrador central ou
-entidade com autoridade privilegiada sobre a rede.
+Winflux is an open, public and *permissionless* monetary protocol. It has no owner, central administrator or
+entity with privileged authority over the network.
 
-Qualquer pessoa pode executar um nó, verificar transações, participar do mecanismo de consenso e desenvolver implementações
-compatíveis com o protocolo, sem necessidade de autorização.
+Anyone can run a node, verify transactions, take part in the consensus mechanism and develop implementations
+compatible with the protocol, without needing authorization.
 
-A emissão monetária, a validação de transações, a liquidação de pagamentos e as regras de segurança são determinadas pelo
-protocolo e verificadas independentemente pelos participantes.
+Monetary issuance, transaction validation, payment settlement and security rules are determined by the
+protocol and independently verified by the participants.
 
-Nenhuma entidade possui poderes administrativos para criar moedas arbitrariamente, congelar carteiras, reverter transações,
-alterar saldos ou impor atualizações aos participantes.
+No entity has administrative powers to create coins arbitrarily, freeze wallets, reverse transactions,
+change balances or force upgrades on participants.
 
-A evolução do protocolo ocorre por desenvolvimento aberto, revisão pública e adoção voluntária de versões pelos operadores da rede.
+The protocol evolves through open development, public review and voluntary adoption of versions by the network operators.
 
-A continuidade da Winflux não depende de seus desenvolvedores originais, de seus servidores ou de qualquer organização específica.
+Winflux's continuity does not depend on its original developers, on their servers or on any specific organization.
 
-O objetivo é construir uma infraestrutura monetária descentralizada, resistente à censura e capaz de continuar funcionando
-independentemente de quem a criou.
+The goal is to build a decentralized, censorship-resistant monetary infrastructure able to keep working
+regardless of who created it.
 
 ---
 
-## Como cada afirmação é garantida no código (e testada)
+## How each statement is guaranteed in the code (and tested)
 
-| Princípio | Mecanismo | Teste |
+| Principle | Mechanism | Test |
 |---|---|---|
-| Sem proprietário/administrador | Rede PoW **rejeita** `authorities` nos parâmetros; não há chave especial em lugar nenhum | `test_decentralization.py::test_public_network_has_no_privileged_party` |
-| Lançamento justo | `netgen` gera gênese com **zero alocações** (sem pré-mineração, sem faucet) | `test_fair_launch_genesis_has_no_premine_no_authority` |
-| Qualquer um participa do consenso | Qualquer endereço minera; nada identifica o produtor (`producer`/`signature` vazios) | `test_any_address_can_mine_without_permission` |
-| Qualquer um roda um nó | `python -m winflux.node.main` com o gênese; o nó verifica tudo sozinho | `test_network.py` (3 nós, sincronização) |
-| Emissão só pelo protocolo | Coinbase ≤ recompensa(altura) + taxas; oferta ≤ teto, verificada por todo nó | `test_money.py`, `test_only_mining_creates_coins…` |
-| Ninguém congela/reverte/altera saldos | Gastar depende só da assinatura do dono; não existe tipo de transação administrativo | `test_only_mining…`, `test_no_admin_backdoors_in_source` |
-| Sem atualização imposta | Nós com regras diferentes rejeitam o gênese/versão do outro: é adoção voluntária (fork de quem discorda) | `test_different_network_is_refused` |
-| Funciona sem os criadores | Sem servidores centrais: descoberta por pares (`addr`), sementes são só pontos de partida substituíveis; carteiras falam com **qualquer** nó | `test_partition_then_heal…`, `test_api_and_cli_end_to_end` |
-| Resistência à censura | Mempool aberto, difusão P2P, mineração aberta; cadeia de maior trabalho vence (reorg) | `test_pow_reorg.py` |
+| No owner/administrator | The PoW network **rejects** `authorities` in the parameters; there is no special key anywhere | `test_decentralization.py::test_public_network_has_no_privileged_party` |
+| Fair launch | `netgen` generates a genesis with **zero allocations** (no premine, no faucet) | `test_fair_launch_genesis_has_no_premine_no_authority` |
+| Anyone takes part in consensus | Any address mines; nothing identifies the producer (`producer`/`signature` empty) | `test_any_address_can_mine_without_permission` |
+| Anyone runs a node | `python -m winflux.node.main` with the genesis; the node verifies everything by itself | `test_network.py` (3 nodes, sync) |
+| Issuance only by the protocol | Coinbase ≤ reward(height) + fees; supply ≤ cap, verified by every node | `test_money.py`, `test_only_mining_creates_coins…` |
+| Nobody freezes/reverses/changes balances | Spending depends only on the owner's signature; there is no administrative transaction type | `test_only_mining…`, `test_no_admin_backdoors_in_source` |
+| No forced upgrade | Nodes with different rules reject each other's genesis/version: adoption is voluntary (a fork for those who disagree) | `test_different_network_is_refused` |
+| Works without the creators | No central servers: peer discovery (`addr`), seeds are just replaceable starting points; wallets talk to **any** node | `test_partition_then_heal…`, `test_api_and_cli_end_to_end` |
+| Censorship resistance | Open mempool, P2P broadcast, open mining; the heaviest-work chain wins (reorg) | `test_pow_reorg.py` |
 
-## Honestidade técnica: o que o software NÃO garante sozinho
+## Technical honesty: what the software does NOT guarantee on its own
 
-Um protocolo só é descentralizado **na prática** quando muita gente independente o opera. Isto depende do mundo, não do código:
+A protocol is only decentralized **in practice** when many independent people operate it. That depends on the world, not on the code:
 
-1. **Descentralização é um fato social.** Com poucos mineradores/nós, quem os controla controla a rede (ataque de 51%).
-   O código não impede isso; só torna tudo verificável.
-2. **"Ninguém reverte transações" é probabilístico.** Reorganizações existem: uma transação só é praticamente final após
-   várias confirmações. Recompensas de mineração amadurecem em `coinbase_maturity` blocos.
-3. **Lançamento justo ≠ distribuição justa.** Sem pré-mineração, quem minera cedo e com mais hardware acumula mais. Os
-   criadores também podem minerar; o que não podem é ter privilégio de protocolo.
-4. **As sementes (`--seed`) são pontos de entrada, não autoridades.** Publique várias, de pessoas diferentes. Hoje não há DNS seeds.
-5. **Segurança do PoW depende do algoritmo.** SHA-256 permite ASICs (centralização de hardware). Decisão aberta
-   (ver "Decisões pendentes").
-6. **Ninguém auditou este código.** É software de testes. Não use com dinheiro real antes de auditoria independente.
+1. **Decentralization is a social fact.** With few miners/nodes, whoever controls them controls the network (51% attack).
+   The code does not prevent that; it only makes everything verifiable.
+2. **"Nobody reverses transactions" is probabilistic.** Reorganizations exist: a transaction is only practically final after
+   several confirmations. Mining rewards mature after `coinbase_maturity` blocks.
+3. **Fair launch ≠ fair distribution.** Without a premine, whoever mines early and with more hardware accumulates more. The
+   creators can mine too; what they cannot have is a protocol privilege.
+4. **Seeds (`--seed`) are entry points, not authorities.** Publish several, from different people. There are no DNS seeds today.
+5. **PoW security depends on the algorithm.** SHA-256 allows ASICs (hardware centralization). Open decision
+   (see "Pending decisions").
+6. **Nobody has audited this code.** It is test software. Do not use it with real money before an independent audit.
 
-## Decisões pendentes (precisam de revisão pública antes de uma rede com valor)
+## Pending decisions (need public review before a network with value)
 
-| Decisão | Estado atual | Observação |
+| Decision | Current state | Note |
 |---|---|---|
-| Algoritmo de PoW | SHA-256 do cabeçalho | Trocar por algo resistente a ASIC é só implementar `Consensus` |
-| Tempo de bloco | 60 s no `netgen` (vaults escalam junto) | O devnet usa 5 s; PoW público com 5 s teria muitos órfãos |
-| Dificuldade inicial | `--initial-hashes` (padrão 2²⁰) | Escolher conforme o hashrate esperado no lançamento |
-| Maturidade de coinbase | 100 blocos | |
-| Pagamentos offline sobre PoW | **NÃO adaptados**: provas de cofre usam *checkpoint assinado por autoridade* (PoA) | Em PoW o checkpoint tem de ser um cabeçalho com trabalho + alvo; ver `security-assumptions.md` H3/H11 |
-| Formato binário de tx, assinaturas pós-quânticas | Fase 1b | |
-| Marca "Winflux/WFLX" | Sem pesquisa de disponibilidade | `docs/naming.md` |
+| PoW algorithm | SHA-256 of the header | Switching to something ASIC-resistant just means implementing `Consensus` |
+| Block time | 60 s in `netgen` (vaults scale along with it) | The devnet uses 5 s; public PoW with 5 s would have many orphans |
+| Initial difficulty | `--initial-hashes` (default 2²⁰) | Choose according to the hashrate expected at launch |
+| Coinbase maturity | 100 blocks | |
+| Offline payments over PoW | **NOT adapted**: vault proofs use an *authority-signed checkpoint* (PoA) | In PoW the checkpoint must be a header with work + target; see `security-assumptions.md` H3/H11 |
+| Binary tx format, post-quantum signatures | Phase 1b | |
+| "Winflux/WFLX" brand | No availability search | `docs/naming.md` |
 
-## Como lançar uma rede (não requer permissão de ninguém)
+## How to launch a network (needs nobody's permission)
 
 ```bash
-python -m winflux.tools.netgen --name mainnet --out genesis.json   # gera o gênese justo (zero pré-mineração)
-# PUBLIQUE o genesis.json (ou só o chain_id + hash do gênese) em vários lugares independentes.
-python -m winflux.node.main --genesis genesis.json --listen 0.0.0.0:8333 --mine <seu endereço>
-# outros: --seed SEU_IP:8333
-python -m winflux.cli --wallet w.json create      # carteira HD com chave de recuperação
+python -m winflux.tools.netgen --name mainnet --out genesis.json   # generates the fair genesis (zero premine)
+# PUBLISH genesis.json (or just the chain_id + genesis hash) in several independent places.
+python -m winflux.node.main --genesis genesis.json --listen 0.0.0.0:8333 --mine <your address>
+# others: --seed YOUR_IP:8333
+python -m winflux.cli --wallet w.json create      # HD wallet with a recovery key
 ```

@@ -1,68 +1,68 @@
-# Testnet Winflux
+# Winflux testnet
 
-> **Para testar, não para guardar valor.** A testnet pode ser reiniciada a qualquer momento (novo gênese = novo
-> `chain_id`), as moedas **não têm valor** e o software não passou por auditoria externa. A criptografia de hardware
-> do pagamento offline é **simulada**; não há atestação de dispositivos reais ainda (ver `docs/security-assumptions.md`).
+> **For testing, not for storing value.** The testnet may be restarted at any time (new genesis = new
+> `chain_id`), the coins **have no value** and the software has not been externally audited. The hardware cryptography
+> of offline payment is **simulated**; there is no attestation of real devices yet (see `docs/security-assumptions.md`).
 
-## O que é
-Uma rede PoW pública com **lançamento justo**: zero pré-mineração, zero alocações, zero autoridades e nenhuma chave
-administrativa (`docs/decentralization.md`). Toda moeda nasce de mineração aberta. Parâmetros padrão do `netgen`:
-bloco-alvo de 60 s, dificuldade inicial de ~2^20 hashes, maturidade da recompensa de 100 blocos, taxa mínima de
-1000 unidades (1 WFLX = 10⁸ unidades). O que é testado aqui, além do básico: pagamentos offline encadeados com
-cofres (`vault_open`, `note_claim`, `vault_refund`), reconciliação do dono e as defesas de rede.
+## What it is
+A public PoW network with a **fair launch**: zero premine, zero allocations, zero authorities and no administrative
+key (`docs/decentralization.md`). Every coin is born from open mining. `netgen` default parameters:
+60 s target block time, initial difficulty of ~2^20 hashes, reward maturity of 100 blocks, minimum fee of
+1000 units (1 WFLX = 10⁸ units). What is tested here, beyond the basics: chained offline payments with
+vaults (`vault_open`, `note_claim`, `vault_refund`), owner reconciliation and the network defenses.
 
-## Entrar na testnet pública
-1. Obtenha o `genesis-testnet.json` e uma lista de seeds (`host:8333`) de quem a opera, e **verifique o `chain_id` por um
-   segundo canal**. Quem publica o arquivo não ganha poder algum: cada nó recomputa o hash do gênese.
-2. Rode o nó (`docs/running-a-node.md`):
+## Joining the public testnet
+1. Get the `genesis-testnet.json` and a list of seeds (`host:8333`) from whoever operates it, and **verify the `chain_id` over a
+   second channel**. Whoever publishes the file gains no power at all: every node recomputes the genesis hash.
+2. Run the node (`docs/running-a-node.md`):
    `python -m winflux.node.main --genesis genesis-testnet.json --seed SEED1:8333 --seed SEED2:8333`
-3. Confira: `curl -s http://127.0.0.1:8080/api/status` → `peers ≥ 1` e a `height` crescendo.
-4. Carteira: `python -m winflux.cli --node http://127.0.0.1:8080 --wallet minha.json create` e use `balance`, `send`.
-5. Moedas de teste: **não há faucet** (seria um ponto de controle). Minere com `--mine <seu endereço>` ou peça a quem
-   minera. Recompensas só são gastáveis após 100 blocos.
+3. Check: `curl -s http://127.0.0.1:8080/api/status` → `peers ≥ 1` and the `height` growing.
+4. Wallet: `python -m winflux.cli --node http://127.0.0.1:8080 --wallet mine.json create` and use `balance`, `send`.
+5. Test coins: **there is no faucet** (it would be a point of control). Mine with `--mine <your address>` or ask someone who
+   mines. Rewards are only spendable after 100 blocks.
 
-## Lançar uma nova testnet (quem opera o 1º nó)
+## Launching a new testnet (whoever operates the 1st node)
 ```bash
-python -m winflux.tools.netgen --name testnet --out genesis-testnet.json      # anote o chain_id impresso
+python -m winflux.tools.netgen --name testnet --out genesis-testnet.json      # note the printed chain_id
 python -m winflux.node.main --genesis genesis-testnet.json --listen 0.0.0.0:8333 --mine wflx1... --seed ...
 ```
-Publique o arquivo (repositório, página, o que preferir) **junto do `chain_id`** e de 2+ seeds de operadores
-independentes. Revise antes os parâmetros em `docs/decentralization.md` (tempo de bloco, dificuldade inicial,
-maturidade): são decisões de projeto, não do script.
+Publish the file (repository, page, whatever you prefer) **together with the `chain_id`** and 2+ seeds from independent
+operators. First review the parameters in `docs/decentralization.md` (block time, initial difficulty,
+maturity): they are design decisions, not the script's.
 
-## Testnet local (4 processos na sua máquina)
+## Local testnet (4 processes on your machine)
 ```bash
 PYTHONPATH=. python scripts/run_local_testnet.py --dir local-testnet --block-time 4
 ```
-Sobe **3 nós conectados + 1 minerador** (P2P `18333–18336`, API `18080–18083`, tudo em 127.0.0.1), com gênese gerado
-pelo `netgen` e dificuldade calibrada para ~`--block-time` s por bloco. Cria `genesis.json`, `miner.wallet.json`
-(senha de devnet: **só local**), `logs/<nó>.log`. `Ctrl+C` encerra; `--keep` retoma a rede anterior. Exemplo:
+Starts **3 connected nodes + 1 miner** (P2P `18333–18336`, API `18080–18083`, all on 127.0.0.1), with a genesis generated
+by `netgen` and the difficulty calibrated for ~`--block-time` s per block. Creates `genesis.json`, `miner.wallet.json`
+(devnet password: **local only**), `logs/<node>.log`. `Ctrl+C` stops it; `--keep` resumes the previous network. Example:
 ```bash
 WINFLUX_WALLET_PASSWORD=devnet-only-password PYTHONPATH=. python -m winflux.cli \
     --node http://127.0.0.1:18081 --wallet local-testnet/miner.wallet.json balance
 ```
-Na rede local a maturidade é 2 blocos e o tempo de bloco é curto; os demais parâmetros são os do `netgen`.
+On the local network the maturity is 2 blocks and the block time is short; the other parameters are `netgen`'s.
 
 ## Smoke test
 ```bash
-PYTHONPATH=. python scripts/smoke_test.py          # sobe a testnet local, testa e derruba (≈1 min)
+PYTHONPATH=. python scripts/smoke_test.py          # starts the local testnet, tests and tears it down (≈1 min)
 PYTHONPATH=. python scripts/smoke_test.py --nodes http://127.0.0.1:18080,http://127.0.0.1:18081 \
-    --wallet local-testnet/miner.wallet.json       # contra uma rede já rodando
+    --wallet local-testnet/miner.wallet.json       # against an already running network
 ```
-Passos: (1) nós sobem, mesma rede, conectados; (2) mineração produz blocos e paga o minerador; (3) transação enviada a um
-nó que não minera propaga, é minerada e aparece em todos; (4) convergência de topo/oferta e **nó tardio** que sincroniza a
-cadeia inteira; (5) **fluxo offline**: abre cofre com chave por vaga, paga Bob → Carol offline, liquida com `note_claim`
-num nó diferente, confere saldo, estado do cofre, relatório de reconciliação e a rejeição da reapresentação. Saída `0`
-= tudo passou. `SMOKE_TRACE=1` mostra o traceback de uma falha; `--keep` preserva os logs.
+Steps: (1) nodes start, same network, connected; (2) mining produces blocks and pays the miner; (3) a transaction sent to a
+non-mining node propagates, is mined and shows up on all; (4) tip/supply convergence and a **late node** that syncs the
+whole chain; (5) **offline flow**: opens a vault with a key per slot, pays Bob → Carol offline, settles with `note_claim`
+on a different node, checks the balance, the vault state, the reconciliation report and the rejection of resubmission. Exit `0`
+= everything passed. `SMOKE_TRACE=1` shows the traceback of a failure; `--keep` preserves the logs.
 
-## Limitações conhecidas (leia antes de testar)
-- Pagamento offline com hardware real (NFC/BLE, atestação) **não existe** ainda; o simulador cobre só a lógica.
-- Sem TLS na API (use proxy), sem explorer, sem faucet, histórico por endereço indisponível na API.
-- Sem DoS "de verdade": os limites ajudam contra abuso simples; um atacante com muitos IPs e poder de hash pode degradar a
-  rede. Sem proteção contra *eclipse* (use seeds de operadores independentes).
-- A rede pode ser reiniciada; guarde apenas o que puder perder.
+## Known limitations (read before testing)
+- Offline payment with real hardware (NFC/BLE, attestation) does **not exist** yet; the simulator only covers the logic.
+- No TLS on the API (use a proxy), no explorer, no faucet, per-address history unavailable on the API.
+- No "real" DoS protection: the limits help against simple abuse; an attacker with many IPs and hash power can degrade the
+  network. No protection against *eclipse* (use seeds from independent operators).
+- The network may be restarted; keep only what you can afford to lose.
 
-## Reportar problemas
-Inclua: versão (commit), `chain_id`, trecho do log **com `--log-level debug`** (o log já omite segredos, mas releia antes de
-colar), passos para reproduzir e a saída de `python scripts/smoke_test.py`. Vulnerabilidades: não abra issue pública;
-contate os mantenedores em privado.
+## Reporting problems
+Include: version (commit), `chain_id`, a log excerpt **with `--log-level debug`** (the log already omits secrets, but reread it before
+pasting), steps to reproduce and the output of `python scripts/smoke_test.py`. Vulnerabilities: do not open a public issue;
+contact the maintainers privately.

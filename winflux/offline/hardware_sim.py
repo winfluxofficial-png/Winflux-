@@ -1,10 +1,10 @@
-"""SIMULADOR de hardware seguro (Android Keystore/StrongBox) para testes. NÃO é segurança real.
+"""SIMULATOR of secure hardware (Android Keystore/StrongBox) for tests. It is NOT real security.
 
-Modela as propriedades de que as garantias dependem (docs/security-assumptions.md, H1):
-  - a chave NÃO é exportável (não há API de exportação; o objeto não pode ser copiado nem serializado);
-  - chave de USO ÚNICO: depois de assinar uma vez, é apagada no hardware (restaurar backup do app não a traz de volta);
-  - atestação assinada por uma raiz de teste, com nível de segurança e desafio.
-Também modela o ADVERSÁRIO: `break_single_use()` representa hardware comprometido que assina de novo.
+Models the properties the guarantees depend on (docs/security-assumptions.md, H1):
+  - the key is NOT exportable (there is no export API; the object cannot be copied or serialized);
+  - SINGLE-USE key: after signing once, it is erased in the hardware (restoring an app backup does not bring it back);
+  - attestation signed by a test root, with security level and challenge.
+It also models the ADVERSARY: `break_single_use()` represents compromised hardware that signs again.
 """
 import os
 from dataclasses import dataclass
@@ -15,11 +15,11 @@ from .attestation import device_statement_bytes, key_statement_bytes
 
 
 class HardwareError(WinfluxError):
-    """Operação recusada pelo hardware simulado."""
+    """Operation refused by the simulated hardware."""
 
 
 class SimulatedRoot:
-    """Raiz de atestação de TESTE (no mundo real: raízes do fabricante, fixadas no verificador)."""
+    """TEST attestation root (in the real world: manufacturer roots, pinned in the verifier)."""
 
     def __init__(self, seed: bytes | None = None):
         self._kp = KeyPair(seed or os.urandom(32))
@@ -38,7 +38,7 @@ class SimulatedRoot:
 
 @dataclass(frozen=True)
 class KeyHandle:
-    """Referência a uma chave dentro do hardware (a chave privada nunca sai de lá)."""
+    """Reference to a key inside the hardware (the private key never leaves it)."""
     hardware: "SimulatedHardware"
     handle: str
     key_type: str
@@ -61,32 +61,32 @@ class SimulatedHardware:
         self._tampered = False
         self._counter = 0
 
-    # --- não clonável / não exportável
+    # --- not clonable / not exportable
     def __copy__(self):
-        raise HardwareError("o hardware não pode ser copiado")
+        raise HardwareError("the hardware cannot be copied")
 
     def __deepcopy__(self, memo):
-        raise HardwareError("o hardware não pode ser copiado")
+        raise HardwareError("the hardware cannot be copied")
 
     def __reduce__(self):
-        raise HardwareError("o hardware não pode ser serializado")
+        raise HardwareError("the hardware cannot be serialized")
 
     def export_key(self, handle: str):
-        raise HardwareError("chave não exportável")
+        raise HardwareError("non-exportable key")
 
-    # --- operações
+    # --- operations
     def break_single_use(self) -> None:
-        """ADVERSÁRIO: hardware comprometido deixa assinar de novo (a atestação continua dizendo uso único)."""
+        """ADVERSARY: compromised hardware lets it sign again (the attestation still says single use)."""
         self._tampered = True
 
     def generate_key(self, key_type: str, challenge: bytes, *, single_use: bool = True, not_before: int = 0,
                      not_after: int = 2**40) -> KeyHandle:
         if key_type not in ("p256", "ed25519"):
-            raise HardwareError("tipo de chave não suportado")
+            raise HardwareError("unsupported key type")
         self._counter += 1
         kp = P256KeyPair() if key_type == "p256" else KeyPair(os.urandom(32))
         h = f"k{self._counter}"
-        # "software" não impõe uso único; TEE/StrongBox impõem se single_use for pedido
+        # "software" does not enforce single use; TEE/StrongBox do if single_use is requested
         impose = single_use and self.level != "software"
         self._keys[h] = {"kp": kp, "impose": impose}
         stmt = {"key_type": key_type, "pubkey": kp.public_hex, "challenge": challenge.hex(), "level": self.level,
@@ -98,10 +98,10 @@ class SimulatedHardware:
     def _sign(self, handle: str, message: bytes) -> bytes:
         k = self._keys.get(handle)
         if k is None:
-            raise HardwareError("chave inexistente ou já usada (uso único)")
+            raise HardwareError("nonexistent key or already used (single use)")
         sig = k["kp"].sign(message)
         if k["impose"] and not self._tampered:
-            del self._keys[handle]          # apagada no hardware: nenhuma restauração a traz de volta
+            del self._keys[handle]          # erased in the hardware: no restore brings it back
         return sig
 
     def has_key(self, handle: str) -> bool:

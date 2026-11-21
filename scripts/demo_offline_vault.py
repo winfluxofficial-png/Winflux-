@@ -1,4 +1,4 @@
-"""Demo: cofre offline, pagamento por voucher, tentativa de gasto duplo e devolução.
+"""Demo: offline vault, voucher payment, double-spend attempt and refund.
 
     PYTHONPATH=. python scripts/demo_offline_vault.py
 """
@@ -13,7 +13,7 @@ from winflux.units import format_units as fu, to_units
 from winflux.wallet.vault_builder import build_vault_open, build_vault_refund, build_voucher_claim
 
 producer, alice, bob, carol, dave, erin = (KeyPair.generate() for _ in range(6))
-phone_key = P256KeyPair()  # no celular real: chave de hardware (Keystore/StrongBox)
+phone_key = P256KeyPair()  # on a real phone: hardware key (Keystore/StrongBox)
 params = ChainParams("winflux-demo", "Winflux", "WFLX", 8, to_units("100000000"), to_units("50"), 210_000,
                      1000, (producer.public_hex,), vault_ttl_min_blocks=2, vault_ttl_max_blocks=50,
                      claim_window_blocks=4)
@@ -28,53 +28,53 @@ def mine(*txs):
 
 
 def line(title):
-    print(f"\n=== {title}  [altura {chain.height}]")
+    print(f"\n=== {title}  [height {chain.height}]")
 
 
 def state(vid):
     v = chain.get_vault(vid)
-    print(f"   travado nos cofres: {fu(chain.vaults.total_locked)} | oferta: {fu(chain.total_supply())} | fraude: {v.fraud}")
+    print(f"   locked in vaults: {fu(chain.vaults.total_locked)} | supply: {fu(chain.total_supply())} | fraud: {v.fraud}")
     print(f"   bob {fu(chain.balance(bob.address))} | carol {fu(chain.balance(carol.address))} | alice {fu(chain.balance(alice.address))}")
 
 
-line("1. Alice (online) abre um cofre: 2 vagas de 10 WFLX + colateral 100%")
+line("1. Alice (online) opens a vault: 2 slots of 10 WFLX + 100% collateral")
 tx = build_vault_open(alice, chain.utxo.utxos_for(alice.address), phone_key, (to_units("10"),) * 2, 100, 10,
                       alice.address, params)
 mine(tx)
 vid = tx.txid
 state(vid)
 
-line("2. OFFLINE: Alice paga 7 WFLX a Bob e, ao mesmo tempo, tenta pagar a MESMA vaga a Carol")
+line("2. OFFLINE: Alice pays 7 WFLX to Bob and, at the same time, tries to pay the SAME slot to Carol")
 v_bob = Voucher.issue(phone_key, params.chain_id, vid, 0, to_units("7"), bob.address, b"\x01" * 16)
 v_carol = Voucher.issue(phone_key, params.chain_id, vid, 0, to_units("7"), carol.address, b"\x02" * 16)
-print(f"   voucher de {len(v_bob.to_bytes())} bytes cada (cabe em QR); ambos têm assinatura válida:")
-print("   Bob  aceita (receptor offline não vê o conflito)  hash", v_bob.hash[:12])
-print("   Carol aceita (idem)                                hash", v_carol.hash[:12])
+print(f"   voucher of {len(v_bob.to_bytes())} bytes each (fits in a QR code); both have a valid signature:")
+print("   Bob  accepts (the offline receiver does not see the conflict)  hash", v_bob.hash[:12])
+print("   Carol accepts (same)                                hash", v_carol.hash[:12])
 
-line("3. Bob volta online e liquida primeiro")
+line("3. Bob comes back online and settles first")
 mine(build_voucher_claim(v_bob, chain.get_vault(vid), params))
 state(vid)
 
-line("4. Carol volta online: a vaga já foi usada, mas ela é compensada pelo colateral (7 de 10 WFLX)")
+line("4. Carol comes back online: the slot was already used, but she is compensated by the collateral (7 of 10 WFLX)")
 mine(build_voucher_claim(v_carol, chain.get_vault(vid), params))
 state(vid)
-print("   => o cofre fica marcado como fraudulento")
+print("   => the vault is marked as fraudulent")
 
-line("5. Terceira vítima na mesma vaga: só resta 3 WFLX de colateral; a quarta fica sem nada")
+line("5. Third victim on the same slot: only 3 WFLX of collateral remain; the fourth gets nothing")
 v3 = Voucher.issue(phone_key, params.chain_id, vid, 0, to_units("7"), dave.address, b"\x03" * 16)
 mine(build_voucher_claim(v3, chain.get_vault(vid), params))
-print(f"   dave recebeu {fu(chain.balance(dave.address))} WFLX (de 7 prometidos): perda de 4 WFLX é o risco residual do nível 1")
+print(f"   dave received {fu(chain.balance(dave.address))} WFLX (of 7 promised): the 4 WFLX loss is the residual risk of level 1")
 v4 = Voucher.issue(phone_key, params.chain_id, vid, 0, to_units("7"), erin.address, b"\x04" * 16)
 try:
     build_voucher_claim(v4, chain.get_vault(vid), params)
 except ValidationError as e:
-    print("   erin: recusado ->", e)
+    print("   erin: rejected ->", e)
 
-line("6. Passado o prazo, devolução do que sobrou (o colateral restante é queimado)")
+line("6. After the deadline, refund of what is left (the remaining collateral is burned)")
 v = chain.get_vault(vid)
 while chain.height <= v.expires_height + params.claim_window_blocks:
     mine()
 before = chain.total_supply()
 mine(build_vault_refund(chain.get_vault(vid), params))
 state(vid)
-print(f"   colateral queimado reduziu a oferta (todo o colateral restante do cofre fraudulento): {fu(before + to_units('50') - chain.total_supply())} WFLX")
+print(f"   burned collateral reduced the supply (all the remaining collateral of the fraudulent vault): {fu(before + to_units('50') - chain.total_supply())} WFLX")

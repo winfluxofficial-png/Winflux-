@@ -10,7 +10,7 @@ import java.net.URL
 
 class NodeException(message: String) : Exception(message)
 
-/** Cliente HTTP/JSON da API do nó (winflux/api/server.py). Bloqueante: chame fora da thread principal. */
+/** HTTP/JSON client for the node API (winflux/api/server.py). Blocking: call it off the main thread. */
 class NodeApi(private val baseUrl: String) : Node {
     private fun call(method: String, path: String, body: String? = null): JSONObject {
         val c = URL(baseUrl + path).openConnection() as HttpURLConnection
@@ -25,13 +25,13 @@ class NodeApi(private val baseUrl: String) : Node {
             }
             val code = c.responseCode
             val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
-            val obj = try { JSONObject(text) } catch (e: Exception) { throw NodeException("resposta inválida do nó (HTTP $code)") }
-            if (code !in 200..299) throw NodeException(obj.optString("error", "erro HTTP $code"))
+            val obj = try { JSONObject(text) } catch (e: Exception) { throw NodeException("invalid response from the node (HTTP $code)") }
+            if (code !in 200..299) throw NodeException(obj.optString("error", "HTTP error $code"))
             return obj
         } catch (e: NodeException) {
             throw e
         } catch (e: Exception) {
-            throw NodeException("não foi possível falar com o nó: ${e.message}")
+            throw NodeException("could not talk to the node: ${e.message}")
         } finally {
             c.disconnect()
         }

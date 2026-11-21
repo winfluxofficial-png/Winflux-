@@ -1,92 +1,92 @@
-# Rodando um nó Winflux
+# Running a Winflux node
 
-> **Software de testes (testnet).** Sem auditoria externa. Não use com dinheiro real nem guarde valor relevante.
-> Qualquer pessoa pode rodar um nó sem pedir permissão; o seu nó verifica tudo por conta própria.
+> **Test software (testnet).** No external audit. Do not use it with real money or keep relevant value on it.
+> Anyone can run a node without asking permission; your node verifies everything on its own.
 
-## 1. Requisitos
-- Python 3.11+ e `pip install -r requirements.txt` (só `cryptography`; `pytest` para os testes).
-- Disco: a cadeia fica num SQLite (`<datadir>/chain.db`); a testnet é pequena (dezenas de MB no começo).
-- Rede: uma porta TCP de P2P (padrão **8333**) aberta de entrada se quiser receber conexões; a **API** (padrão
-  `127.0.0.1:8080`) é só local por padrão.
+## 1. Requirements
+- Python 3.11+ and `pip install -r requirements.txt` (only `cryptography`; `pytest` for the tests).
+- Disk: the chain lives in a SQLite file (`<datadir>/chain.db`); the testnet is small (tens of MB at first).
+- Network: one P2P TCP port (default **8333**) open for inbound if you want to receive connections; the **API** (default
+  `127.0.0.1:8080`) is local-only by default.
 
-## 2. Obter o gênese (a identidade da rede)
-O gênese é só um arquivo de dados. O `chain_id` é derivado dele e **cada nó o verifica sozinho**: dois nós só se
-conectam se tiverem exatamente o mesmo gênese. Pegue o `genesis-testnet.json` publicado pela comunidade (veja
-`docs/testnet.md`) **e confira o `chain_id` com alguém de confiança por outro canal**. Para gerar o seu próprio:
+## 2. Getting the genesis (the network's identity)
+The genesis is just a data file. The `chain_id` is derived from it and **every node verifies it by itself**: two nodes only
+connect if they have exactly the same genesis. Get the `genesis-testnet.json` published by the community (see
+`docs/testnet.md`) **and check the `chain_id` with someone you trust over another channel**. To generate your own:
 
 ```bash
 python -m winflux.tools.netgen --name testnet --out genesis-testnet.json
 ```
 
-## 3. Rodar
+## 3. Running
 ```bash
 python -m winflux.node.main --genesis genesis-testnet.json --datadir ~/.winflux \
-    --listen 0.0.0.0:8333 --api 127.0.0.1:8080 --seed IP_DE_UM_NO:8333
+    --listen 0.0.0.0:8333 --api 127.0.0.1:8080 --seed IP_OF_A_NODE:8333
 ```
-Para minerar, crie uma carteira e passe o endereço (a chave **não** fica no nó):
+To mine, create a wallet and pass its address (the key does **not** stay on the node):
 ```bash
-python -m winflux.cli --wallet minha.json create          # senha via WINFLUX_WALLET_PASSWORD ou prompt; mostra o endereço wflx1…
+python -m winflux.cli --wallet mine.json create          # password via WINFLUX_WALLET_PASSWORD or prompt; shows the wflx1… address
 python -m winflux.node.main --genesis genesis-testnet.json --seed IP:8333 --mine wflx1...
 ```
-Anote a **chave de recuperação** (`wflxk1-…`) que a carteira mostra ao ser criada: é a única forma de recuperar os fundos.
-O nó para com `Ctrl+C`/`SIGTERM` (fecha o banco e a API com calma).
+Write down the **recovery key** (`wflxk1-…`) that the wallet shows when it is created: it is the only way to recover the funds.
+The node stops on `Ctrl+C`/`SIGTERM` (it closes the database and the API gracefully).
 
-### Opções
-| Opção | Padrão | Para quê |
+### Options
+| Option | Default | What it is for |
 |---|---|---|
-| `--genesis` | (obrigatório) | arquivo de gênese |
-| `--datadir` | `winflux-data` | cadeia (`chain.db`) e `peers.json` |
+| `--genesis` | (required) | genesis file |
+| `--datadir` | `winflux-data` | chain (`chain.db`) and `peers.json` |
 | `--listen` | `0.0.0.0:8333` | P2P |
-| `--api` | `127.0.0.1:8080` | API HTTP/JSON (vazio desativa) |
-| `--seed` | — | `host:porta` de um nó conhecido (repetível). Sem seeds, o nó só aceita conexões de entrada |
-| `--mine` | — | endereço que recebe as recompensas; liga a mineração (rede PoW) |
-| `--max-outbound` / `--max-inbound` | 8 / 32 | conexões P2P |
-| `--max-inbound-per-ip` | 8 | conexões de entrada por IP (loopback isento) |
-| `--api-rate` | 600 | requisições/min **por IP** na API |
-| `--api-tx-rate` | 60 | `POST /api/tx` por min por IP |
-| `--api-trust-proxy` | desligado | usa o último `X-Forwarded-For` (só atrás do **seu** proxy) |
+| `--api` | `127.0.0.1:8080` | HTTP/JSON API (empty disables it) |
+| `--seed` | — | `host:port` of a known node (repeatable). Without seeds, the node only accepts inbound connections |
+| `--mine` | — | address that receives the rewards; turns mining on (PoW network) |
+| `--max-outbound` / `--max-inbound` | 8 / 32 | P2P connections |
+| `--max-inbound-per-ip` | 8 | inbound connections per IP (loopback exempt) |
+| `--api-rate` | 600 | requests/min **per IP** on the API |
+| `--api-tx-rate` | 60 | `POST /api/tx` per min per IP |
+| `--api-trust-proxy` | off | uses the last `X-Forwarded-For` (only behind **your own** proxy) |
 | `--log-level` | `info` | `debug`, `info`, `warning`, `error` |
-| `--log-file` | — | além do console, grava em arquivo (rotação 5 MB × 3) |
+| `--log-file` | — | besides the console, writes to a file (rotation 5 MB × 3) |
 
-## 4. Expor a API com segurança
-A API não tem contas nem privilégios (qualquer carteira usa qualquer nó), mas **não tem TLS**. Para expô-la à internet,
-ponha um proxy reverso com HTTPS na frente (nginx, Caddy…), mantenha `--api 127.0.0.1:8080` e passe
-`--api-trust-proxy` **somente** se o proxy for seu e sobrescrever/acrescentar o `X-Forwarded-For`. Sem essa opção o
-cabeçalho é ignorado (é forjável) e todos os clientes atrás do proxy compartilhariam um único balde de limite.
+## 4. Exposing the API safely
+The API has no accounts or privileges (any wallet uses any node), but it **has no TLS**. To expose it to the internet,
+put a reverse proxy with HTTPS in front (nginx, Caddy…), keep `--api 127.0.0.1:8080` and pass
+`--api-trust-proxy` **only** if the proxy is yours and overwrites/appends `X-Forwarded-For`. Without that option the
+header is ignored (it can be forged) and all clients behind the proxy would share a single rate-limit bucket.
 
-## 5. Limites e proteção contra abuso (já embutidos)
-- **P2P:** mensagem máxima 4 MB (16 KB antes do handshake e tetos menores por tipo: ping 256 B, inv 256 KB, tx 512 KB…);
-  limite de mensagens/s no total e por tipo, e de bytes/s por peer. Dicas em excesso (`inv`/`addr`/`ping`) são
-  descartadas; pedidos em excesso são **atrasados** e somam pontos de mau comportamento (100 pontos = banimento de 1 h).
-  Blocos que o seu próprio nó pediu na sincronização não contam para o limite de bytes.
-- **Conexões:** limite total e por IP; reconexão com recuo exponencial (5 s, 10 s… até 5 min) e esquecimento de
-  endereços mortos (nunca dos `--seed`).
-- **API:** corpo ≤ 200 KB, cabeçalhos ≤ 16 KB, 256 conexões (32 por IP), timeout de 20 s por pedido (anti-slowloris),
-  limite de taxa **antes** de ler o corpo, e limite mais estrito para `POST /api/tx`. Respostas: `429` (com
-  `Retry-After`), `413`, `431`, `408`, `503`; erros internos viram `500 {"error":"erro interno"}` sem detalhes.
+## 5. Limits and abuse protection (already built in)
+- **P2P:** maximum message 4 MB (16 KB before the handshake and smaller per-type caps: ping 256 B, inv 256 KB, tx 512 KB…);
+  limit on messages/s overall and per type, and on bytes/s per peer. Excess hints (`inv`/`addr`/`ping`) are
+  dropped; excess requests are **delayed** and add misbehavior points (100 points = a 1 h ban).
+  Blocks that your own node requested during sync do not count toward the byte limit.
+- **Connections:** total and per-IP limit; reconnect with exponential backoff (5 s, 10 s… up to 5 min) and forgetting of
+  dead addresses (never the `--seed` ones).
+- **API:** body ≤ 200 KB, headers ≤ 16 KB, 256 connections (32 per IP), 20 s timeout per request (anti-slowloris),
+  rate limit **before** reading the body, and a stricter limit for `POST /api/tx`. Responses: `429` (with
+  `Retry-After`), `413`, `431`, `408`, `503`; internal errors become `500 {"error":"internal error"}` without details.
 
 ## 6. Logs
-Formato: `AAAA-MM-DDTHH:MM:SS NÍVEL logger: mensagem`. O que **nunca** é registrado: corpo de mensagens P2P ou HTTP,
-transações, senhas, sementes, chaves privadas/de recuperação, conteúdo de carteira. Erros vindos de peers/clientes
-registram só o **tipo** da exceção; mensagens de regra do protocolo (`bloco 12 rejeitado: ...`) podem aparecer. Como rede
-de segurança, todo texto passa por um filtro que redige padrões como `senha=…`, `seed: …`, `wflxk1-…`, `Bearer …`.
-Endereços IP de peers aparecem em `info`/`debug` (necessário para operar); se isso for sensível no seu caso, use
+Format: `YYYY-MM-DDTHH:MM:SS LEVEL logger: message`. What is **never** logged: P2P or HTTP message bodies,
+transactions, passwords, seeds, private/recovery keys, wallet contents. Errors coming from peers/clients
+log only the exception **type**; protocol rule messages (`block 12 rejected: ...`) may appear. As a safety
+net, all text goes through a filter that redacts patterns such as `password=…`, `seed: …`, `wflxk1-…`, `Bearer …`.
+Peer IP addresses show up at `info`/`debug` (needed to operate); if that is sensitive in your case, use
 `--log-level warning`.
-Mensagens úteis: `peer pronto`, `novo topo N hash`, `bloco minerado`, `REORG`, `banido <ip>`, `FALHA DE ARMAZENAMENTO`.
+Useful messages: `peer ready`, `new tip N hash`, `block mined`, `REORG`, `banned <ip>`, `STORAGE FAILURE`.
 
-## 7. Operação
-- **Backup:** copie `<datadir>/` com o nó parado (ou use `sqlite3 chain.db ".backup ..."`). A cadeia é refeita pela rede se
-  perdida; **o que não se refaz é a sua carteira** (`minha.json` + chave de recuperação).
-- **Atualizar:** pare o nó, atualize o código, reinicie. Mudança de regra de consenso vira nova versão do protocolo
-  anunciada com antecedência; o `proto` é conferido no handshake.
-- **Reset da testnet:** o gênese novo gera outro `chain_id`; apague o `--datadir` antigo.
-- **Códigos de saída:** `0` normal; `2` gênese ausente/inválido ou banco corrompido; `1` erro de sistema (porta em uso etc.).
+## 7. Operation
+- **Backup:** copy `<datadir>/` with the node stopped (or use `sqlite3 chain.db ".backup ..."`). The chain is rebuilt from the network if
+  lost; **what cannot be rebuilt is your wallet** (`mine.json` + recovery key).
+- **Upgrading:** stop the node, update the code, restart. A change to a consensus rule becomes a new protocol version
+  announced in advance; the `proto` is checked in the handshake.
+- **Testnet reset:** a new genesis produces another `chain_id`; delete the old `--datadir`.
+- **Exit codes:** `0` normal; `2` missing/invalid genesis or corrupted database; `1` system error (port in use etc.).
 
-## 8. Problemas comuns
-| Sintoma | Causa provável |
+## 8. Common problems
+| Symptom | Likely cause |
 |---|---|
-| `erro de sistema ao iniciar o nó: Address already in use` | porta P2P/API ocupada: troque `--listen`/`--api` |
-| `peers=0` e altura parada | sem `--seed`, porta do seed fechada ou **gênese diferente** (confira o `chain_id`) |
-| `banido <ip>` nos logs | o peer violou limites/regras (ou é de outra rede): é o comportamento esperado |
-| `429` na API | passou do limite por IP: espere ou ajuste `--api-rate` |
-| `FALHA DE ARMAZENAMENTO` | disco cheio/sem permissão; pare o nó e verifique `<datadir>/chain.db` |
+| `system error while starting the node: Address already in use` | P2P/API port busy: change `--listen`/`--api` |
+| `peers=0` and height stuck | no `--seed`, the seed's port is closed or **different genesis** (check the `chain_id`) |
+| `banned <ip>` in the logs | the peer violated limits/rules (or is from another network): this is the expected behavior |
+| `429` on the API | exceeded the per-IP limit: wait or adjust `--api-rate` |
+| `STORAGE FAILURE` | disk full/no permission; stop the node and check `<datadir>/chain.db` |

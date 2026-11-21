@@ -1,4 +1,4 @@
-"""PoW sem autoridades, ajuste de dificuldade, maturidade e reorganizações."""
+"""PoW without authorities, difficulty adjustment, maturity and reorganizations."""
 from dataclasses import replace
 
 import pytest
@@ -14,7 +14,7 @@ from winflux.wallet.transaction_builder import build_transfer
 
 from .conftest import NOW, T0, WFLX, kp
 
-EASY = "00ff" + "f" * 60          # ~1/256 de chance por tentativa
+EASY = "00ff" + "f" * 60          # ~1/256 chance per attempt
 
 
 def pow_params(**over) -> ChainParams:
@@ -37,7 +37,7 @@ def make_pow_chain(storage=None, alloc=(), clock=None, **over):
 
 
 def mine_on(chain, reward_to, txs=(), ts=None, parent=None):
-    """Minera um bloco sobre o topo (ou sobre `parent`, criando ramo lateral)."""
+    """Mines a block on top of the tip (or on top of `parent`, creating a side branch)."""
     if parent is None:
         blk = chain.create_block("", reward_to, list(txs), timestamp=ts)
     else:
@@ -53,7 +53,7 @@ def mine_on(chain, reward_to, txs=(), ts=None, parent=None):
 
 def test_pow_chain_has_no_authority_and_anyone_can_mine():
     chain = make_pow_chain()
-    for n in (2, 3, 4):                         # três mineradores desconhecidos entre si
+    for n in (2, 3, 4):                         # three miners unknown to each other
         r = chain.add_block(mine_on(chain, kp(n).address))
         assert r.status == "extended"
     assert chain.height == 3 and chain.params.authorities == ()
@@ -64,11 +64,11 @@ def test_pow_rejects_insufficient_work_and_signed_blocks():
     chain = make_pow_chain(pow_limit="0000" + "f" * 60)
     blk = chain.create_block("", kp(2).address, [])
     blk.nonce = 0
-    assert hash_to_int(blk.hash) > chain.next_target()   # nonce arbitrário (quase certo) não basta
-    with pytest.raises(ValidationError, match="trabalho"):
+    assert hash_to_int(blk.hash) > chain.next_target()   # an arbitrary nonce (almost surely) is not enough
+    with pytest.raises(ValidationError, match="work"):
         chain.add_block(blk)
     good = mine_on(chain, kp(2).address)
-    with pytest.raises(ValidationError, match="produtor"):
+    with pytest.raises(ValidationError, match="producer"):
         chain.add_block(replace(good, producer="ab" * 32))
 
 
@@ -86,24 +86,24 @@ def test_fast_search_matches_block_hash():
 
 
 def test_difficulty_rises_when_blocks_are_too_fast_and_falls_when_slow():
-    chain = make_pow_chain()                    # intervalo 8, alvo 10 s => esperado 70 s
+    chain = make_pow_chain()                    # interval 8, target 10 s => expected 70 s
     t = T0
-    for _ in range(7):                          # blocos a cada 1 s (muito rápido)
+    for _ in range(7):                          # blocks every 1 s (too fast)
         t += 1
         chain.add_block(mine_on(chain, kp(2).address, ts=t))
-    new = chain.next_target()                   # altura 8: reajuste
+    new = chain.next_target()                   # height 8: retarget
     assert new < int(EASY, 16) and new >= int(EASY, 16) // 5
-    for _ in range(8):                          # agora lento: 100 s por bloco
+    for _ in range(8):                          # now slow: 100 s per block
         t += 100
         chain.add_block(mine_on(chain, kp(2).address, ts=t))
-    assert chain.next_target() > new            # alivia, limitado a 4x e ao pow_limit
+    assert chain.next_target() > new            # eases, limited to 4x and to pow_limit
     assert chain.next_target() <= int(EASY, 16)
 
 
 def test_wrong_difficulty_is_rejected_even_if_hash_meets_declared_one():
     chain = make_pow_chain(pow_limit="0000" + "f" * 60)   # 1/65536
     blk = chain.create_block("", kp(2).address, [])
-    # um bloco com hash que só satisfaz um alvo mais fraco não passa
+    # a block whose hash only satisfies a weaker target does not pass
     weak = int("00ff" + "f" * 60, 16)
     ProofOfWork.mine(blk, weak)
     if hash_to_int(blk.hash) > chain.next_target():
@@ -117,26 +117,26 @@ def test_coinbase_maturity():
     chain.add_block(mine_on(chain, miner.address))
     utxos = chain.utxo.utxos_for(miner.address)
     tx = build_transfer(miner, utxos, kp(3).address, 10 * WFLX, 1000, chain.params.chain_id)
-    assert len(chain.create_block("", kp(7).address, [tx]).transactions) == 1   # o minerador honesto a omite
+    assert len(chain.create_block("", kp(7).address, [tx]).transactions) == 1   # the honest miner omits it
     from winflux.blockchain.transaction import Transaction, TxOutput
     cb = Transaction(chain.params.chain_id, (), (TxOutput(50 * WFLX + 1000, kp(7).address),),
                      coinbase_height=2, payload={"prev_hash": chain.tip.hash})
     forced = Block.build(2, chain.tip.hash, chain.tip.timestamp + 10, "", [cb, tx], state_root=chain.tip.state_root)
     ProofOfWork.mine(forced, chain.next_target())
-    with pytest.raises(ValidationError, match="amadureceu"):
+    with pytest.raises(ValidationError, match="matured"):
         chain.add_block(forced)
     chain.add_block(mine_on(chain, kp(7).address))
-    chain.add_block(mine_on(chain, kp(7).address))       # altura 3: maturidade 3 atingida no bloco 4
+    chain.add_block(mine_on(chain, kp(7).address))       # height 3: maturity 3 reached at block 4
     r = chain.add_block(mine_on(chain, kp(7).address, [tx]))
     assert r.status == "extended" and chain.balance(kp(3).address) == 10 * WFLX
-    # o gênese não está sujeito à maturidade
+    # the genesis is not subject to maturity
     spend = build_transfer(kp(2), chain.utxo.utxos_for(kp(2).address), kp(3).address, WFLX, 1000,
                            chain.params.chain_id)
     chain.add_block(mine_on(chain, kp(7).address, [spend]))
 
 
 def _fork(chain, n_main, n_side):
-    """Cria dois ramos a partir do topo atual. Retorna (blocos_do_principal, blocos_do_lateral)."""
+    """Creates two branches from the current tip. Returns (main_blocks, side_blocks)."""
     base = chain.tip
     side_chain = make_pow_chain(alloc=((kp(2).address, 1000 * WFLX),))
     return base, side_chain
@@ -144,10 +144,10 @@ def _fork(chain, n_main, n_side):
 
 def test_reorg_to_heavier_branch_and_back_state_is_consistent():
     alloc = ((kp(2).address, 1000 * WFLX),)
-    a = make_pow_chain(alloc=alloc)             # nó A
-    b = make_pow_chain(alloc=alloc)             # nó B (mesmo gênese)
+    a = make_pow_chain(alloc=alloc)             # node A
+    b = make_pow_chain(alloc=alloc)             # node B (same genesis)
     assert a.genesis_block.hash == b.genesis_block.hash
-    # A minera 2 blocos para o minerador 4; B minera 3 blocos para o minerador 5
+    # A mines 2 blocks for miner 4; B mines 3 blocks for miner 5
     for _ in range(2):
         a.add_block(mine_on(a, kp(4).address))
     for t in range(3):
@@ -177,7 +177,7 @@ def test_reorg_returns_disconnected_blocks_for_mempool():
     assert r.status == "reorg" and [x.height for x in r.disconnected] == [1]
     assert any(t.txid == tx.txid for t in r.disconnected[0].transactions)
     assert a.balance(kp(3).address) == 0 and a.confirmations(tx.txid) == 0
-    a.check_transaction(tx)                      # a transação voltou a ser válida
+    a.check_transaction(tx)                      # the transaction became valid again
 
 
 def test_invalid_heavier_branch_is_rejected_and_old_chain_restored():
@@ -185,7 +185,7 @@ def test_invalid_heavier_branch_is_rejected_and_old_chain_restored():
     a, b = make_pow_chain(alloc=alloc), make_pow_chain(alloc=alloc)
     a.add_block(mine_on(a, kp(4).address))
     b.add_block(mine_on(b, kp(5).address, ts=T0 + 50))
-    # bloco 2 do ramo B cria moeda do nada (coinbase inflada) mas tem PoW válido
+    # block 2 of branch B creates coins out of nothing (inflated coinbase) but has valid PoW
     from winflux.blockchain.transaction import Transaction, TxOutput
     b1 = b.tip
     cb = Transaction(b.params.chain_id, (), (TxOutput(10_000 * WFLX, kp(5).address),),
@@ -219,7 +219,7 @@ def test_equal_work_does_not_reorg_first_seen_wins():
     a.add_block(mine_on(a, kp(4).address))
     b.add_block(mine_on(b, kp(5).address, ts=T0 + 77))
     tip = a.tip.hash
-    # trabalho por bloco é igual só se o alvo é igual; com pow_limit fixo é o caso
+    # work per block is equal only if the target is equal; with a fixed pow_limit that is the case
     assert a.add_block(b.blocks[1]).status == "side" and a.tip.hash == tip
 
 

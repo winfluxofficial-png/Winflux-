@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Renomeia o projeto (diretório do pacote + conteúdo dos arquivos).
+"""Renames the project (package directory + file contents).
 
-Uso, a partir da raiz do repositório:
+Usage, from the repository root:
 
-    python scripts/rename_project.py                      # padrão: Winflux / WFLX
-    python scripts/rename_project.py --new-name Outro --new-symbol OTR
+    python scripts/rename_project.py                      # default: Winflux / WFLX
+    python scripts/rename_project.py --new-name Other --new-symbol OTH
     python scripts/rename_project.py --dry-run
 
-O nome e o símbolo ATUAIS são detectados sozinhos: o pacote é o diretório que contém `crypto/address.py` e o
-símbolo vem do PREFIX de endereço (ex.: "wflx1"). Substitui, nesta ordem: NOME, Nome, nome, <sim>k1 (chave de
-recuperação), <sim>1 (prefixo de endereço), SÍMBOLO e <sim> (domínios de assinatura "SIM-…").
-Não toca em `docs/naming.md` (histórico de nomes) nem neste script. Rode os testes depois.
-ATENÇÃO: mudar o símbolo muda endereços e assinaturas: só é seguro enquanto não há rede pública.
+The CURRENT name and symbol are detected automatically: the package is the directory that contains `crypto/address.py`
+and the symbol comes from the address PREFIX (e.g. "wflx1"). It replaces, in this order: NAME, Name, name, <sym>k1
+(recovery key), <sym>1 (address prefix), SYMBOL and <sym> (signature domains "SYM-…").
+It does not touch `docs/naming.md` (naming history) or this script. Run the tests afterwards.
+WARNING: changing the symbol changes addresses and signatures: it is only safe while there is no public network.
 """
 import argparse
 import os
@@ -30,7 +30,7 @@ def detect(root: str):
             m = re.search(r'PREFIX\s*=\s*"([a-z0-9]+)1"', open(p, encoding="utf-8").read())
             if m:
                 return d, m.group(1)
-    sys.exit("não encontrei o pacote (diretório com crypto/address.py)")
+    sys.exit("could not find the package (directory with crypto/address.py)")
 
 
 def main():
@@ -43,7 +43,7 @@ def main():
     old_pkg, old_sym = detect(root)
     new_pkg, new_sym = a.new_name.lower(), a.new_symbol.lower()
     if (old_pkg, old_sym) == (new_pkg, new_sym):
-        sys.exit("nada a fazer: o projeto já usa esse nome e símbolo")
+        sys.exit("nothing to do: the project already uses that name and symbol")
     pairs = [(old_pkg.upper(), a.new_name.upper()), (old_pkg.capitalize(), a.new_name), (old_pkg, new_pkg),
              (old_sym + "k1", new_sym + "k1"), (old_sym + "1", new_sym + "1"),
              (old_sym.upper(), new_sym.upper()), (old_sym, new_sym)]
@@ -63,11 +63,11 @@ def main():
                 changed += 1
                 if not a.dry_run:
                     open(path, "w", encoding="utf-8").write(s)
-    print(f"{old_pkg}/{old_sym.upper()} -> {new_pkg}/{new_sym.upper()}: {changed} arquivo(s) "
-          f"{'seriam alterados' if a.dry_run else 'alterados'}")
+    print(f"{old_pkg}/{old_sym.upper()} -> {new_pkg}/{new_sym.upper()}: {changed} file(s) "
+          f"{'would be changed' if a.dry_run else 'changed'}")
     if not a.dry_run:
         os.rename(os.path.join(root, old_pkg), os.path.join(root, new_pkg))
-        print(f"pacote renomeado: {old_pkg}/ -> {new_pkg}/")
+        print(f"package renamed: {old_pkg}/ -> {new_pkg}/")
 
 
 if __name__ == "__main__":

@@ -1,35 +1,36 @@
 # Changelog
 
-## 0.1.0rc1 — release candidate da testnet
-Primeira versão para testes reais da testnet. **Não é uma versão para dinheiro real** (sem auditoria externa, hardware
-de atestação simulado).
+## 0.1.0rc1 — testnet release candidate
+First version for real testnet testing. **It is not a version for real money** (no external audit, simulated
+attestation hardware).
 
-### Protocolo / consenso
-- **A3 `note_claim`:** liquidação on-chain de notas offline encadeadas em vagas com chave própria; conflito (gasto
-  duplo) indenizado pelo colateral sob R1–R9; `MAX_SETTLED_PER_SLOT = 64`; estado da vaga (`spends`/`settled`)
-  comprometido na raiz de estado via `claimed_by` (formato do `state_root` inalterado). Ver `docs/protocol.md`.
-- Limite conhecido: o teto R2 usa o valor da vaga, não o de cada nota contestada.
-- Nenhum parâmetro monetário alterado.
+### Protocol / consensus
+- **A3 `note_claim`:** on-chain settlement of chained offline notes in slots with their own key; conflict (double
+  spend) compensated by the collateral under R1–R9; `MAX_SETTLED_PER_SLOT = 64`; slot state (`spends`/`settled`)
+  committed in the state root via `claimed_by` (`state_root` format unchanged). See `docs/protocol.md`.
+- Known limit: the R2 cap uses the slot's value, not that of each contested note.
+- No monetary parameter changed.
 
-### Carteiras e ferramentas
-- **A4 reconciliação:** `GET /api/vault/<id>`, `GET /api/vaults/<endereço>`, diário do dono, `reconcile(...)`; CLI
-  `vaults`, `reconcile`, `vault-refund`. Sem fechamento antecipado de vaga (inseguro; ver `docs/protocol.md`).
-- **Carteira Android v0.1** (`android-wallet/`): online (HD, enviar/receber). Núcleo testado na JVM contra o Python; UI não compilada.
-- `build_note_claim`, `Vault.from_dict`, `HDWallet` inalterado.
+### Wallets and tools
+- **A4 reconciliation:** `GET /api/vault/<id>`, `GET /api/vaults/<address>`, owner journal, `reconcile(...)`; CLI
+  `vaults`, `reconcile`, `vault-refund`. No early close of a slot (unsafe; see `docs/protocol.md`).
+- **Android wallet v0.1** (`android-wallet/`): online (HD, send/receive). Core tested on the JVM against Python; UI not compiled.
+- `build_note_claim`, `Vault.from_dict`, `HDWallet` unchanged.
 
-### Operação / endurecimento
-- Rate limiting no P2P (mensagens/s, bytes/s, por tipo, tamanho por tipo, limite por IP, recuo de reconexão) e na API
-  (taxa por IP antes de ler o corpo, limite próprio para `POST /api/tx`, caps de conexão, anti-slowloris, validação estrita).
-- Logging com níveis, rotação e redação de segredos (`winflux/logs.py`); mineração e laços de rede resilientes a erros;
-  erros de inicialização claros; flags `--log-level`, `--log-file`, `--max-inbound-per-ip`, `--api-rate`,
-  `--api-tx-rate`, `--api-trust-proxy`; `version` em `/api/status`.
-- `scripts/run_local_testnet.py` (3 nós + 1 minerador), `scripts/smoke_test.py` (nó, mineração, tx, sincronização,
-  nó tardio, vault + `note_claim` + reconciliação).
+### Operation / hardening
+- Rate limiting in P2P (messages/s, bytes/s, per type, size per type, per-IP limit, reconnect backoff) and in the API
+  (per-IP rate before reading the body, own limit for `POST /api/tx`, connection caps, anti-slowloris, strict validation).
+- Logging with levels, rotation and secret redaction (`winflux/logs.py`); mining and network loops resilient to errors;
+  clear startup errors; flags `--log-level`, `--log-file`, `--max-inbound-per-ip`, `--api-rate`,
+  `--api-tx-rate`, `--api-trust-proxy`; `version` in `/api/status`.
+- `scripts/run_local_testnet.py` (3 nodes + 1 miner), `scripts/smoke_test.py` (node, mining, tx, sync,
+  late node, vault + `note_claim` + reconciliation).
 - Docs: `running-a-node.md`, `testnet.md`, `test-plan.md`, `security-assumptions.md`.
+- The whole project (code comments, messages, logs, docs and app) is now in English.
 
-### Testes
-- Suíte `pytest`: ver `docs/test-plan.md` (contagem exata e como rodar). Smoke em processos reais: `WINFLUX_SMOKE=1`.
+### Tests
+- `pytest` suite: see `docs/test-plan.md` (exact count and how to run). Smoke test on real processes: `WINFLUX_SMOKE=1`.
 
-## Antes
-Etapas 1–3 e A1–A2 (blockchain, P2P, API, CLI, carteira HD, cofres, vouchers, notas offline, provas de cofre,
-state_root, R1–R9): ver `README.md` e `docs/protocol.md`.
+## Before
+Stages 1–3 and A1–A2 (blockchain, P2P, API, CLI, HD wallet, vaults, vouchers, offline notes, vault proofs,
+state_root, R1–R9): see `README.md` and `docs/protocol.md`.

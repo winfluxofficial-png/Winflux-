@@ -8,14 +8,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
-/** Compatibilidade byte a byte com o nó Python: endereços, HD, chave de recuperação, JSON canônico, txid e assinaturas. */
+/** Byte-for-byte compatibility with the Python node: addresses, HD, recovery key, canonical JSON, txid and signatures. */
 class CoreTest {
     private val master = Vectors.MASTER.hexToBytes()
     private fun hd() = HdWallet(master, testEd)
 
     private fun expectFail(f: () -> Unit) {
         try { f() } catch (e: Exception) { return }
-        fail("deveria ter falhado")
+        fail("should have failed")
     }
 
     @Test fun hdKeysAndAddressesMatchPython() {
@@ -53,7 +53,7 @@ class CoreTest {
         assertFalse(Address.isValid("x" + a.drop(1)))
         assertFalse(Address.isValid(""))
         assertFalse(Address.isValid("wflx1"))
-        for (pos in 5 until a.length) {                         // trocar qualquer caractere quebra o checksum
+        for (pos in 5 until a.length) {                         // swapping any character breaks the checksum
             val c = if (a[pos] == 'a') 'b' else 'a'
             assertFalse(Address.isValid(a.substring(0, pos) + c + a.substring(pos + 1)))
         }
@@ -64,7 +64,7 @@ class CoreTest {
         assertEquals(Vectors.ESCAPE_EXPECTED, CanonicalJson.encode(v))
     }
 
-    // ---------------------------------------------------------------- transações
+    // ---------------------------------------------------------------- transactions
     private val rules = FeeRules(1000, 1, 100_000, 256, 256)
     private val utxos = Vectors.UTXOS.map { Utxo(it[0] as String, it[1] as Int, it[2] as Long, it[3] as String) }
 
@@ -91,24 +91,24 @@ class CoreTest {
 
     @Test fun builderRejectsBadRequests() {
         expectFail { build(rules, amount = 0) }
-        expectFail { build(rules, amount = 10_000_000_000L) }                 // saldo insuficiente
+        expectFail { build(rules, amount = 10_000_000_000L) }                 // insufficient funds
         expectFail { build(rules, list = emptyList()) }
-        expectFail { build(rules.copy(maxInputs = 1)) }                        // precisaria de 2 entradas
+        expectFail { build(rules.copy(maxInputs = 1)) }                        // would need 2 inputs
         val w = hd()
         expectFail { TxBuilder.build(w, { 0 }, utxos, "wflx1invalido", 1, w.address(2), "c", rules) }
-        expectFail { TxBuilder.build(w, { null }, utxos, Vectors.DEST, 600_000_000L, w.address(2), "c", rules) }   // sem chave
+        expectFail { TxBuilder.build(w, { null }, utxos, Vectors.DEST, 600_000_000L, w.address(2), "c", rules) }   // no key
     }
 
     @Test fun signaturesVerifyAgainstTheTxid() {
         val tx = build(rules)
         val msg = SignedTx.signingMessage(tx.txid)
         tx.inputs.forEach { assertEquals(128, it.signature.length) }
-        // O txid não depende das assinaturas
+        // The txid does not depend on the signatures
         assertEquals(tx.txid, SignedTx.txidOf(tx.chainId, tx.inputs.map { it.copy(signature = "") }, tx.outputs))
         assertEquals(15 + 32, msg.size)
     }
 
-    // ---------------------------------------------------------------- motor (carteira sobre um nó falso)
+    // ---------------------------------------------------------------- engine (wallet on top of a fake node)
     private class FakeNode(val height: Long = 100) : Node {
         val byAddr = HashMap<String, MutableList<AddrUtxo>>()
         val submitted = ArrayList<String>()
@@ -129,8 +129,8 @@ class CoreTest {
         val s = e.refresh()
         assertEquals(900_000_000L, s.balance)
         assertEquals(900_000_000L, s.spendable)
-        assertEquals(2, s.nextIndex)                                   // endereços 0 e 1 usados
-        assertEquals(hd().address(2), s.receiveAddress)                // o próximo de recebimento é novo
+        assertEquals(2, s.nextIndex)                                   // addresses 0 and 1 used
+        assertEquals(hd().address(2), s.receiveAddress)                // the next receiving address is new
     }
 
     @Test fun enginePreparesTheSameTxAsPythonAndNeverReusesCoins() {
@@ -144,8 +144,8 @@ class CoreTest {
         e.send(p)
         assertEquals(1, node.submitted.size)
         assertEquals(Vectors.TX_JSON, node.submitted[0])
-        expectFail { e.prepare(Vectors.DEST, 600_000_000L) }           // as moedas grandes estão pendentes: sem saldo
-        val small = e.prepare(Vectors.DEST, 50_000_000L)               // sobra a moeda de 1 WFLX
+        expectFail { e.prepare(Vectors.DEST, 600_000_000L) }           // the large coins are pending: no balance
+        val small = e.prepare(Vectors.DEST, 50_000_000L)               // the 1 WFLX coin is left
         assertEquals(1, small.tx.inputs.size)
     }
 
@@ -156,20 +156,20 @@ class CoreTest {
         val e = WalletEngine(hd(), node)
         val s = e.refresh()
         assertEquals(600_000_000L, s.balance)
-        assertEquals(100_000_000L, s.spendable)                        // a de 5 WFLX só gasta na altura 150
+        assertEquals(100_000_000L, s.spendable)                        // the 5 WFLX one can only be spent at height 150
         expectFail { e.prepare(Vectors.DEST, 200_000_000L) }
     }
 
     @Test fun restoringFromTheRecoveryKeyFindsFundsBeyondTheGap() {
         val node = FakeNode()
         val w = hd()
-        node.byAddr[w.address(17)] = mutableListOf(AddrUtxo("44".repeat(32), 0, 700_000_000L, 0))   // dentro do gap de 20
+        node.byAddr[w.address(17)] = mutableListOf(AddrUtxo("44".repeat(32), 0, 700_000_000L, 0))   // within the gap of 20
         val e = WalletEngine(HdWallet.fromRecoveryKey(Vectors.RECOVERY, testEd), node)
         val s = e.refresh()
         assertEquals(700_000_000L, s.balance)
         assertEquals(18, e.nextIndex)
         val node2 = FakeNode()
-        node2.byAddr[w.address(25)] = mutableListOf(AddrUtxo("55".repeat(32), 0, 1L, 0))             // além do gap: não é achado
+        node2.byAddr[w.address(25)] = mutableListOf(AddrUtxo("55".repeat(32), 0, 1L, 0))             // beyond the gap: not found
         assertEquals(0L, WalletEngine(hd(), node2).refresh().balance)
     }
 

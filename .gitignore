@@ -1,38 +1,8 @@
-# Python
-.venv/
-venv/
 __pycache__/
-*.py[cod]
-*.egg-info/
+*.pyc
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-build/
-dist/
-
-# Ambientes e segredos
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-*.p12
-*.pfx
-*.secret
-*wallet.json
-*wallet*.json
-
-# Testnet e dados locais
-local-testnet/
-*.log
-*.sqlite
-*.sqlite3
+devnet/
+*.key.json
 *.db
-
-# Sistema operacional e editores
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+*.db-wal
+*.db-shm

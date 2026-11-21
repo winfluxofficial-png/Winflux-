@@ -1,6 +1,6 @@
 package br.winflux.wallet.core
 
-/** Política do endereço do nó: https em qualquer host; http só em localhost/IP privado (nós de teste). */
+/** Node address policy: https for any host; http only for localhost/private IP (test nodes). */
 object NodeUrl {
     fun normalize(raw: String): String? {
         val t = raw.trim().trimEnd('/')

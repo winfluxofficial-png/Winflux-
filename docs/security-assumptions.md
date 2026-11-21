@@ -1,25 +1,25 @@
-# Hipóteses de segurança (Winflux)
+# Security assumptions (Winflux)
 
-> Software de testes. Nada aqui é promessa de segurança absoluta. Pagamento offline **nunca** previne gasto duplo por
-> si só: limita o dano e o compensa de forma determinística.
+> Test software. Nothing here is a promise of absolute security. Offline payment **never** prevents a double spend by
+> itself: it limits the damage and compensates it deterministically.
 
-## O que o consenso GARANTE (verificado por todo nó, testado)
-- Oferta ≤ teto; nenhuma criação de moeda fora da coinbase; valores inteiros.
-- Cada nota/vaga paga no máximo uma vez com valor do depósito; gasto duplo de nota é detectado na liquidação (`note_claim`)
-  e o ramo perdedor só é indenizado pelo colateral, sob limites R1–R9 (nunca acima do colateral nem do valor da vaga).
-- Estado determinístico e reversível (reorganizações), comprometido no `state_root` de cada bloco.
+## What consensus GUARANTEES (verified by every node, tested)
+- Supply ≤ cap; no coin creation outside the coinbase; integer values.
+- Each note/slot pays at most once with deposit value; a double spend of a note is detected at settlement (`note_claim`)
+  and the losing branch is only compensated by the collateral, under limits R1–R9 (never above the collateral or the slot's value).
+- Deterministic and reversible state (reorganizations), committed in each block's `state_root`.
 
-## O que NÃO é garantido
-- **Gasto duplo offline** não é impedido: quem possui a chave da vaga pode gastá-la em dois lugares. O receptor só vê o
-  problema ao liquidar. A proteção é: colateral (ρ ≥ 1), tetos de valor e de profundidade, nível de hardware, prazo.
-- **Hardware**: a atestação (Secure Element/TEE/StrongBox) e a chave de uso único são SIMULADAS (`hardware_sim.py`).
-  Toda proteção baseada em hardware depende de: raiz de confiança do fabricante íntegra, firmware sem falhas,
-  impossibilidade de clonar/restaurar o estado da chave. Nada disso foi verificado em dispositivos reais.
-- **Software sem hardware**: profundidade 1 e teto baixo (política do receptor, não consenso).
-- **Quântico**: a chave de uma nota só é revelada ao gastar (compromisso de hash), reduzindo a exposição; Ed25519/P-256
-  continuam quebráveis por um computador quântico. Chaves de vaga pós-quânticas (LMS) estão no roadmap (fase 1b).
-- **Disponibilidade**: se o dono não liquidar dentro de `claim_window`, o valor volta ao dono do cofre (`vault_refund`).
-  Receptores precisam submeter o `note_claim` antes do prazo; por isso o verificador exige margem mínima.
-- **Poeira**: folhas abaixo de `max(min_voucher_value, min_fee+1)` não são liquidáveis.
-- **Limites de estado**: ≤ 16 indenizações (R9) e ≤ 64 folhas liquidadas por vaga.
-- **Sem auditoria externa.** Parâmetros (colateral, janelas, tetos) são de testnet e precisam ser calibrados.
+## What is NOT guaranteed
+- **Offline double spend** is not prevented: whoever holds the slot key can spend it in two places. The receiver only sees the
+  problem at settlement. The protection is: collateral (ρ ≥ 1), value and depth caps, hardware level, deadline.
+- **Hardware**: attestation (Secure Element/TEE/StrongBox) and the single-use key are SIMULATED (`hardware_sim.py`).
+  Every hardware-based protection depends on: an intact manufacturer root of trust, flawless firmware,
+  and the impossibility of cloning/restoring the key's state. None of this has been verified on real devices.
+- **Software without hardware**: depth 1 and a low cap (receiver policy, not consensus).
+- **Quantum**: a note's key is only revealed when spending (hash commitment), reducing exposure; Ed25519/P-256
+  can still be broken by a quantum computer. Post-quantum slot keys (LMS) are on the roadmap (phase 1b).
+- **Availability**: if the owner does not settle within `claim_window`, the value goes back to the vault owner (`vault_refund`).
+  Receivers must submit the `note_claim` before the deadline; that is why the verifier requires a minimum margin.
+- **Dust**: leaves below `max(min_voucher_value, min_fee+1)` cannot be settled.
+- **State limits**: ≤ 16 compensations (R9) and ≤ 64 settled leaves per slot.
+- **No external audit.** Parameters (collateral, windows, caps) are testnet values and need to be calibrated.

@@ -1,4 +1,4 @@
-"""Limites determinísticos de exposição do colateral (R1-R9) — testes adversariais."""
+"""Deterministic collateral exposure limits (R1-R9) — adversarial tests."""
 import random
 from dataclasses import replace
 
@@ -18,21 +18,21 @@ BASE = dict(collateral_left=10, compensated_total=0, contested_value=10, paid_le
             leaf_id="a", leaf_value=6, min_payout=2)
 
 
-# ---------------------------------------------------------------- função pura
+# ---------------------------------------------------------------- pure function
 def test_pure_basic_payout_and_each_rule():
-    assert plan_compensation(**BASE) == 6                                           # R4: valor da folha
-    assert plan_compensation(**{**BASE, "leaf_value": 50}) == 10                    # R1/R2: teto
+    assert plan_compensation(**BASE) == 6                                           # R4: leaf value
+    assert plan_compensation(**{**BASE, "leaf_value": 50}) == 10                    # R1/R2: cap
     assert plan_compensation(**{**BASE, "collateral_left": 3}) == 3                 # R1
-    assert plan_compensation(**{**BASE, "compensated_total": 7}) == 3               # R2: sobra 3 do valor contestado
-    with pytest.raises(ValidationError, match="já indenizado"):                     # R3
+    assert plan_compensation(**{**BASE, "compensated_total": 7}) == 3               # R2: 3 of the contested value remain
+    with pytest.raises(ValidationError, match="already compensated"):                     # R3
         plan_compensation(**{**BASE, "paid_leaves": ("a",)})
-    with pytest.raises(ValidationError, match="limite de indenizações"):            # R9
+    with pytest.raises(ValidationError, match="compensation limit"):            # R9
         plan_compensation(**{**BASE, "paid_leaves": ("x", "y"), "max_events": 2})
-    with pytest.raises(ValidationError, match="esgotado"):                          # R1
+    with pytest.raises(ValidationError, match="exhausted"):                          # R1
         plan_compensation(**{**BASE, "collateral_left": 0})
-    with pytest.raises(ValidationError, match="valor contestado"):                  # R2
+    with pytest.raises(ValidationError, match="contested value"):                  # R2
         plan_compensation(**{**BASE, "compensated_total": 10})
-    with pytest.raises(ValidationError, match="abaixo do mínimo"):                  # R8
+    with pytest.raises(ValidationError, match="below the minimum"):                  # R8
         plan_compensation(**{**BASE, "collateral_left": 1})
 
 
@@ -43,13 +43,13 @@ def test_pure_rejects_nonpositive_values(bad):
 
 
 def test_pure_is_deterministic_and_total_never_exceeds_caps():
-    """Qualquer sequência de claims perdedores: Σ ≤ colateral e Σ ≤ valor contestado; cada folha 1 vez."""
+    """Any sequence of losing claims: Σ ≤ collateral and Σ ≤ contested value; each leaf once."""
     rnd = random.Random(42)
     for _ in range(300):
         K, contested = rnd.randint(1, 100), rnd.randint(1, 100)
         coll, comp, leaves, total = K, 0, [], 0
         for n in range(rnd.randint(1, 40)):
-            leaf = rnd.choice([f"l{rnd.randint(0, 12)}", f"l{n}"])       # inclui reapresentações
+            leaf = rnd.choice([f"l{rnd.randint(0, 12)}", f"l{n}"])       # includes resubmissions
             try:
                 p = plan_compensation(collateral_left=coll, compensated_total=comp, contested_value=contested,
                                       paid_leaves=leaves, max_events=8, leaf_id=leaf,
@@ -61,7 +61,7 @@ def test_pure_is_deterministic_and_total_never_exceeds_caps():
         assert total <= K and total <= contested and len(leaves) == len(set(leaves)) <= 8 and coll >= 0
 
 
-# ---------------------------------------------------------------- reapresentação (bug encontrado na revisão)
+# ---------------------------------------------------------------- resubmission (bug found in review)
 def test_compensated_voucher_cannot_be_replayed_same_payout(keys):
     dev = devs()["ed25519"]
     chain = vchain(keys)
@@ -70,9 +70,9 @@ def test_compensated_voucher_cannot_be_replayed_same_payout(keys):
     v2 = issue(chain, dev, vid, 0, 3 * WFLX, keys["carol"], b"\x02" * 16)
     tx = claim(chain, keys, v2)
     left = chain.get_vault(vid).slots[0].collateral_left
-    with pytest.raises(ValidationError, match="já indenizado"):
-        chain.check_transaction(tx)                         # a MESMA tx, reenviada
-    with pytest.raises(ValidationError, match="já indenizado"):
+    with pytest.raises(ValidationError, match="already compensated"):
+        chain.check_transaction(tx)                         # the SAME tx, resent
+    with pytest.raises(ValidationError, match="already compensated"):
         build_voucher_claim(v2, chain.get_vault(vid), chain.params)
     assert chain.get_vault(vid).slots[0].collateral_left == left
 
@@ -86,21 +86,21 @@ def test_compensated_voucher_cannot_be_replayed_with_changed_payout(keys):
     claim(chain, keys, v3)
     carol = chain.balance(keys["carol"].address)
     assert carol == 8 * WFLX - FEE
-    with pytest.raises(ValidationError, match="já indenizado"):
-        build_voucher_claim(v3, chain.get_vault(vid), chain.params)   # antes: pagava mais 2 (total 10 > 8)
+    with pytest.raises(ValidationError, match="already compensated"):
+        build_voucher_claim(v3, chain.get_vault(vid), chain.params)   # before: it paid 2 more (total 10 > 8)
     assert chain.balance(keys["carol"].address) == carol
 
 
 def test_block_production_survives_replayed_and_poisoned_claims(keys):
-    """Candidatos inválidos/reapresentados são descartados; nunca derrubam a produção de blocos."""
+    """Invalid/resubmitted candidates are discarded; they never bring down block production."""
     dev = devs()["ed25519"]
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev, caps=(10 * WFLX,))
     claim(chain, keys, issue(chain, dev, vid, 0, 4 * WFLX, keys["bob"], b"\x01" * 16))
     v2 = issue(chain, dev, vid, 0, 3 * WFLX, keys["carol"], b"\x02" * 16)
     tx2 = claim(chain, keys, v2)
-    blk = mine(chain, keys, [tx2, tx2, tx2])                # reapresentações como candidatas
-    assert len(blk.transactions) == 1                       # só a coinbase
+    blk = mine(chain, keys, [tx2, tx2, tx2])                # resubmissions as candidates
+    assert len(blk.transactions) == 1                       # only the coinbase
     assert chain.get_vault(vid).slots[0].comp_leaves == [v2.hash]
 
 
@@ -109,27 +109,27 @@ def test_duplicate_outpoint_guard_is_a_validation_error(keys):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev, caps=(10 * WFLX,))
     tx = build_voucher_claim(issue(chain, dev, vid, 0, 4 * WFLX, keys["bob"]), chain.get_vault(vid), chain.params)
-    chain.utxo._add((tx.txid, 0), tx.outputs[0])            # simula colisão de outpoint
-    with pytest.raises(ValidationError, match="repetida"):
+    chain.utxo._add((tx.txid, 0), tx.outputs[0])            # simulates an outpoint collision
+    with pytest.raises(ValidationError, match="repeated"):
         chain.check_transaction(tx)
 
 
-# ---------------------------------------------------------------- R2 / R9 / R8 na cadeia
+# ---------------------------------------------------------------- R2 / R9 / R8 on the chain
 def test_r2_value_cap_even_with_big_collateral(keys):
-    """ρ = 300%: o colateral é 3x o teto, mas as indenizações de uma nota contestada não passam do valor dela."""
+    """ρ = 300%: the collateral is 3x the cap, but compensations for a contested note never exceed its value."""
     dev = devs()["ed25519"]
     chain = vchain(keys, vault_collateral_min_pct=100)
     vid = open_vault(chain, keys, dev, caps=(10 * WFLX,), pct=300)
     assert chain.get_vault(vid).slots[0].collateral_left == 30 * WFLX
-    claim(chain, keys, issue(chain, dev, vid, 0, 10 * WFLX, keys["bob"], b"\x01" * 16))     # teto: 10
-    claim(chain, keys, issue(chain, dev, vid, 0, 7 * WFLX, keys["carol"], b"\x02" * 16))    # indeniza 7
-    claim(chain, keys, issue(chain, dev, vid, 0, 7 * WFLX, keys["mallory"], b"\x03" * 16))  # só restam 3 do valor
+    claim(chain, keys, issue(chain, dev, vid, 0, 10 * WFLX, keys["bob"], b"\x01" * 16))     # cap: 10
+    claim(chain, keys, issue(chain, dev, vid, 0, 7 * WFLX, keys["carol"], b"\x02" * 16))    # compensates 7
+    claim(chain, keys, issue(chain, dev, vid, 0, 7 * WFLX, keys["mallory"], b"\x03" * 16))  # only 3 of the value remain
     assert chain.balance(keys["mallory"].address) == 3 * WFLX - FEE
-    with pytest.raises(ValidationError, match="valor contestado"):
+    with pytest.raises(ValidationError, match="contested value"):
         build_voucher_claim(issue(chain, dev, vid, 0, 5 * WFLX, keys["alice"], b"\x04" * 16),
-                            chain.get_vault(vid), chain.params)                             # 10 já indenizados
+                            chain.get_vault(vid), chain.params)                             # 10 already compensated
     s = chain.get_vault(vid).slots[0]
-    assert s.compensated == 10 * WFLX <= s.cap and s.collateral_left == 20 * WFLX              # sobra queima na fraude
+    assert s.compensated == 10 * WFLX <= s.cap and s.collateral_left == 20 * WFLX              # the remainder is burned on fraud
 
 
 def test_r9_max_compensations_per_slot(keys):
@@ -139,7 +139,7 @@ def test_r9_max_compensations_per_slot(keys):
     claim(chain, keys, issue(chain, dev, vid, 0, 1 * WFLX, keys["bob"], b"\x01" * 16))
     claim(chain, keys, issue(chain, dev, vid, 0, 1 * WFLX, keys["carol"], b"\x02" * 16))
     claim(chain, keys, issue(chain, dev, vid, 0, 1 * WFLX, keys["mallory"], b"\x03" * 16))
-    with pytest.raises(ValidationError, match="limite de indenizações"):
+    with pytest.raises(ValidationError, match="compensation limit"):
         build_voucher_claim(issue(chain, dev, vid, 0, 1 * WFLX, keys["alice"], b"\x04" * 16),
                             chain.get_vault(vid), chain.params)
     assert len(chain.get_vault(vid).slots[0].comp_leaves) == 2
@@ -150,8 +150,8 @@ def test_r8_dust_remainder_is_not_compensated(keys):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev, caps=(10 * WFLX,), pct=100)
     claim(chain, keys, issue(chain, dev, vid, 0, 1 * WFLX, keys["bob"], b"\x01" * 16))
-    claim(chain, keys, issue(chain, dev, vid, 0, 10 * WFLX - 5_000, keys["carol"], b"\x02" * 16))  # sobram 5.000 u
-    with pytest.raises(ValidationError, match="abaixo do mínimo"):
+    claim(chain, keys, issue(chain, dev, vid, 0, 10 * WFLX - 5_000, keys["carol"], b"\x02" * 16))  # 5,000 u remain
+    with pytest.raises(ValidationError, match="below the minimum"):
         build_voucher_claim(issue(chain, dev, vid, 0, 1 * WFLX, keys["mallory"], b"\x03" * 16),
                             chain.get_vault(vid), chain.params)
 
@@ -166,13 +166,13 @@ def test_refund_after_exposure_burns_only_the_remainder(keys):
     advance(chain, keys, 1)
     before = chain.total_supply()
     plan = V.plan_refund(chain.get_vault(vid), chain.params, None)
-    assert plan.burn == 30 * WFLX - 6 * WFLX and plan.total == 0                  # cap pago; colateral restante queimado
+    assert plan.burn == 30 * WFLX - 6 * WFLX and plan.total == 0                  # cap paid; remaining collateral burned
     mine(chain, keys, [build_vault_refund(chain.get_vault(vid), chain.params)])
     assert chain.total_supply() == before + 50 * WFLX - plan.burn
     assert balances(chain, keys) == chain.total_supply() and chain.vaults.total_locked == 0
 
 
-# ---------------------------------------------------------------- propriedades adversariais
+# ---------------------------------------------------------------- adversarial properties
 def test_property_random_claims_never_exceed_guaranteed_value(keys):
     rnd = random.Random(11)
     dev = devs()["p256"]
@@ -184,7 +184,7 @@ def test_property_random_claims_never_exceed_guaranteed_value(keys):
                   bytes([n]) * 16) for n in range(1, 40)]
     locked0 = chain.vaults.total_locked
     for step in range(120):
-        v = rnd.choice(pool)                                    # inclui reapresentações e vouchers inválidos pela ordem
+        v = rnd.choice(pool)                                    # includes resubmissions and invalid vouchers, in order
         try:
             tx = build_voucher_claim(v, chain.get_vault(vid), chain.params)
             mine(chain, keys, [tx])
@@ -203,7 +203,7 @@ def test_property_random_claims_never_exceed_guaranteed_value(keys):
 
 
 def test_fuzz_ledger_never_raises_non_validation_errors(keys):
-    """Claims mutados aleatoriamente: só ValidationError é aceitável (nunca ValueError/KeyError...)."""
+    """Randomly mutated claims: only ValidationError is acceptable (never ValueError/KeyError...)."""
     rnd = random.Random(5)
     dev = devs()["ed25519"]
     chain = vchain(keys)

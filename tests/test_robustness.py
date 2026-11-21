@@ -1,4 +1,4 @@
-"""Fase 0: sondas adversariais da auditoria, agora permanentes (determinísticas)."""
+"""Phase 0: adversarial probes from the audit, now permanent (deterministic)."""
 import copy
 import random
 
@@ -52,7 +52,7 @@ def test_fuzz_block_parsing_never_crashes(chain, keys):
         try:
             Block.from_dict(d)
         except ValidationError:
-            pass  # qualquer outra exceção derruba o teste
+            pass  # any other exception fails the test
 
 
 def test_fuzz_validation_accepts_only_identical_tx(chain, keys):
@@ -66,7 +66,7 @@ def test_fuzz_validation_accepts_only_identical_tx(chain, keys):
             chain.check_transaction(Transaction.from_dict(d))
         except ValidationError:
             continue
-        assert d == base, "uma transação ALTERADA foi aceita (maleabilidade)"
+        assert d == base, "a TAMPERED transaction was accepted (malleability)"
 
 
 def test_property_supply_and_balances_under_random_operations(keys):
@@ -80,7 +80,7 @@ def test_property_supply_and_balances_under_random_operations(keys):
             amt = rnd.randint(1, min(bal // 2, 50 * WFLX))
             pending.append(build_transfer(s, chain.utxo.utxos_for(s.address), r.address, amt,
                                           rnd.choice([1000, 5000]), chain.params.chain_id))
-            if rnd.random() < 0.3:  # tentativa de gasto duplo: mesma moeda, outro destino
+            if rnd.random() < 0.3:  # double spend attempt: same coin, another destination
                 pending.append(build_transfer(s, chain.utxo.utxos_for(s.address), keys["mallory"].address,
                                               amt, 1000, chain.params.chain_id))
         if step % 5 == 4:
@@ -88,5 +88,5 @@ def test_property_supply_and_balances_under_random_operations(keys):
             pending = []
         total = sum(chain.balance(k.address) for k in keys.values())
         assert total == chain.total_supply() <= chain.params.max_supply
-    assert chain.balance(keys["mallory"].address) == 0       # nenhum gasto duplo passou
+    assert chain.balance(keys["mallory"].address) == 0       # no double spend got through
     assert all(o.value > 0 for o in chain.utxo._utxos.values())

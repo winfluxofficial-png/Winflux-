@@ -1,4 +1,4 @@
-"""Bloco: cabeçalho + transações. O hash cobre só o cabeçalho."""
+"""Block: header + transactions. The hash covers only the header."""
 import re
 from dataclasses import dataclass
 
@@ -23,12 +23,12 @@ class Block:
     prev_hash: str
     timestamp: int
     merkle_root: str
-    producer: str            # pubkey hex do produtor (PoA); "" no gênese
-    nonce: int               # reservado para PoW (Etapa 5)
-    meta: str                # gênese: hash dos parâmetros da rede
+    producer: str            # producer's pubkey hex (PoA); "" in the genesis
+    nonce: int               # reserved for PoW (Stage 5)
+    meta: str                # genesis: hash of the network parameters
     transactions: tuple
-    signature: str = ""      # assinatura do produtor sobre o hash (PoA)
-    state_root: str = EMPTY_VAULT_ROOT  # raiz Merkle do registro de cofres APÓS o bloco
+    signature: str = ""      # producer's signature over the hash (PoA)
+    state_root: str = EMPTY_VAULT_ROOT  # Merkle root of the vault registry AFTER the block
 
     def header(self) -> dict:
         return {"height": self.height, "prev_hash": self.prev_hash,
@@ -62,25 +62,25 @@ class Block:
             keys = {"height", "prev_hash", "timestamp", "merkle_root", "producer",
                     "nonce", "meta", "signature", "transactions", "state_root"}
             if not isinstance(d, dict) or set(d) != keys:
-                raise ValidationError("campos do bloco inválidos")
+                raise ValidationError("invalid block fields")
             for k in ("height", "timestamp", "nonce"):
                 if not _is_int(d[k]) or d[k] < 0:
-                    raise ValidationError(f"{k} inválido")
+                    raise ValidationError(f"invalid {k}")
             for k in ("prev_hash", "merkle_root", "state_root"):
                 if not (isinstance(d[k], str) and _HEX64.match(d[k])):
-                    raise ValidationError(f"{k} inválido")
+                    raise ValidationError(f"invalid {k}")
             if not (isinstance(d["producer"], str) and (d["producer"] == "" or _HEX64.match(d["producer"]))):
-                raise ValidationError("produtor inválido")
+                raise ValidationError("invalid producer")
             if not (isinstance(d["signature"], str) and (d["signature"] == "" or _HEX128.match(d["signature"]))):
-                raise ValidationError("assinatura inválida")
+                raise ValidationError("invalid signature")
             if not isinstance(d["meta"], str) or len(d["meta"]) > 128:
-                raise ValidationError("meta inválido")
+                raise ValidationError("invalid meta")
             if not isinstance(d["transactions"], list) or len(d["transactions"]) > MAX_TXS_PARSE:
-                raise ValidationError("transações inválidas")
+                raise ValidationError("invalid transactions")
             txs = tuple(Transaction.from_dict(t) for t in d["transactions"])
             return cls(d["height"], d["prev_hash"], d["timestamp"], d["merkle_root"],
                        d["producer"], d["nonce"], d["meta"], txs, d["signature"], d["state_root"])
         except ValidationError:
             raise
         except Exception as e:
-            raise ValidationError(f"bloco malformado: {type(e).__name__}") from None
+            raise ValidationError(f"malformed block: {type(e).__name__}") from None

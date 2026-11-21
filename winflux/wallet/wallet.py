@@ -1,4 +1,4 @@
-"""Carteira: keystore cifrado em arquivo."""
+"""Wallet: encrypted keystore in a file."""
 import json
 import os
 
@@ -20,7 +20,7 @@ class Wallet:
 
     def save(self, path: str, password: str, kdf_n: int = KDF_N_DEFAULT) -> None:
         ks = encrypt_keystore(self.keypair, password, kdf_n)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)  # nunca sobrescreve
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)  # never overwrites
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(ks, f, indent=2)
 
@@ -30,5 +30,5 @@ class Wallet:
             with open(path, "r", encoding="utf-8") as f:
                 ks = json.load(f)
         except (OSError, ValueError):
-            raise WalletError("não foi possível ler o keystore") from None
+            raise WalletError("could not read the keystore") from None
         return cls(decrypt_keystore(ks, password))

@@ -4,7 +4,7 @@ import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-/** Primitivas de hash. Idênticas às do nó Python (winflux/crypto/hashing.py). */
+/** Hash primitives. Identical to the Python node's (winflux/crypto/hashing.py). */
 object Hashing {
     fun sha256(vararg parts: ByteArray): ByteArray {
         val md = MessageDigest.getInstance("SHA-256")
@@ -18,7 +18,7 @@ object Hashing {
         return mac.doFinal(data)
     }
 
-    /** HKDF-SHA256 (RFC 5869), como `cryptography.hazmat...HKDF` usado em wallet/hd.py. */
+    /** HKDF-SHA256 (RFC 5869), like `cryptography.hazmat...HKDF` used in wallet/hd.py. */
     fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int = 32): ByteArray {
         require(length in 1..255 * 32 && salt.isNotEmpty())
         val prk = hmacSha256(salt, ikm)
@@ -43,6 +43,6 @@ fun ByteArray.toHex(): String {
 }
 
 fun String.hexToBytes(): ByteArray {
-    require(length % 2 == 0 && all { it in HEX }) { "hex inválido" }
+    require(length % 2 == 0 && all { it in HEX }) { "invalid hex" }
     return ByteArray(length / 2) { ((HEX.indexOf(this[2 * it]) shl 4) or HEX.indexOf(this[2 * it + 1])).toByte() }
 }

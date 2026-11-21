@@ -1,7 +1,7 @@
-"""Nó Winflux: cadeia + mempool + P2P + mineração + API, num único laço asyncio.
+"""Winflux node: chain + mempool + P2P + mining + API, in a single asyncio loop.
 
-Toda mutação do estado acontece no laço de eventos (uma thread), então não há corridas.
-A busca de nonces roda em threads de trabalho e só lê um cabeçalho imutável.
+Every state mutation happens in the event loop (one thread), so there are no races.
+Nonce search runs in worker threads and only reads an immutable header.
 """
 import asyncio
 import os
@@ -23,7 +23,7 @@ from .storage import BlockStorage
 
 MAX_ORPHANS = 100
 MINE_CHUNK = 150_000
-TEMPLATE_REFRESH = 20      # s: reconstrói o modelo para incluir novas transações
+TEMPLATE_REFRESH = 20      # s: rebuilds the template to include new transactions
 
 
 def make_consensus(params):
@@ -53,12 +53,12 @@ class Node:
         self._new_tip = None
         self.started = None
 
-    # ---------- ciclo de vida ----------
+    # ---------- lifecycle ----------
     async def start(self):
         self._new_tip = asyncio.Event()
         await self.p2p.start()
         self.started = time.time()
-        self.log(f"nó iniciado: rede {self.chain.params.chain_id}, altura {self.chain.height}, P2P porta {self.p2p.port}")
+        self.log(f"node started: network {self.chain.params.chain_id}, height {self.chain.height}, P2P port {self.p2p.port}")
         if self.mine_to:
             self.start_mining()
 
@@ -70,13 +70,13 @@ class Node:
         await self.p2p.stop()
         if self.chain.storage:
             self.chain.storage.close()
-        self.log("nó parado")
+        self.log("node stopped")
 
     @property
     def port(self):
         return self.p2p.port
 
-    # ---------- informações ----------
+    # ---------- information ----------
     def version_payload(self) -> dict:
         c = self.chain
         return {"proto": PROTOCOL_VERSION, "chain_id": c.params.chain_id, "genesis": c.genesis_block.hash,
@@ -98,36 +98,36 @@ class Node:
                 "mempool": len(self.mempool), "peers": len(self.p2p.ready_peers()),
                 "mining": self.mining, "orphans": len(self._orphans)}
 
-    # ---------- blocos ----------
+    # ---------- blocks ----------
     async def on_block_message(self, peer, d):
         try:
             block = Block.from_dict(d)
         except ValidationError as e:
-            return peer.misbehave(50, f"bloco malformado: {e}")
+            return peer.misbehave(50, f"malformed block: {e}")
         peer.known.add(block.hash)
         await self.accept_block(block, peer)
 
     async def on_blocks_message(self, peer, d):
         if not isinstance(d, dict) or not isinstance(d.get("blocks"), list):
-            return peer.misbehave(20, "blocks inválido")
+            return peer.misbehave(20, "invalid blocks")
         peer.sync_inflight = False
         before = self.chain.tip.hash
         for raw in d["blocks"][:500]:
             try:
                 block = Block.from_dict(raw)
             except ValidationError as e:
-                return peer.misbehave(50, f"bloco malformado: {e}")
+                return peer.misbehave(50, f"malformed block: {e}")
             peer.known.add(block.hash)
             if not await self.accept_block(block, peer, batch=True) and peer.closed:
                 return
-            await asyncio.sleep(0)               # cede o laço entre blocos
+            await asyncio.sleep(0)               # yields the loop between blocks
         if self.chain.tip.hash != before:
             await self.p2p.broadcast_inv(blocks=[self.chain.tip.hash], exclude=peer)
             if d.get("more"):
                 await self.request_blocks(peer)
 
     async def accept_block(self, block: Block, peer=None, batch=False) -> bool:
-        """Retorna True se o bloco entrou (ativo ou lateral)."""
+        """Returns True if the block got in (active or side)."""
         try:
             result = self.chain.add_block(block)
         except KnownBlock:
@@ -140,18 +140,18 @@ class Node:
                 await self.request_blocks(peer)
             return False
         except ValidationError as e:
-            if peer is not None and "futuro" not in str(e):
-                peer.misbehave(20 if "já foi rejeitado" in str(e) else 100, f"bloco inválido: {e}")
-            self.log(f"bloco {block.height} rejeitado: {e}", "warning")
+            if peer is not None and "future" not in str(e):
+                peer.misbehave(20 if "already rejected" in str(e) else 100, f"invalid block: {e}")
+            self.log(f"block {block.height} rejected: {e}", "warning")
             return False
-        except StorageError as e:                         # disco cheio/corrompido: grave e deixe subir ao chamador
-            self.log(f"FALHA DE ARMAZENAMENTO ao aceitar bloco {block.height}: {e}", "error")
+        except StorageError as e:                         # disk full/corrupted: log it and let it rise to the caller
+            self.log(f"STORAGE FAILURE while accepting block {block.height}: {e}", "error")
             raise
         if result.status in ("extended", "reorg"):
             self.mempool.on_chain_update(result)
             if result.status == "reorg":
-                self.log(f"REORG: {len(result.disconnected)} bloco(s) desfeito(s), {len(result.connected)} novo(s)", "warning")
-            self.log(f"novo topo {self.chain.height} {self.chain.tip.hash[:12]}")
+                self.log(f"REORG: {len(result.disconnected)} block(s) undone, {len(result.connected)} new", "warning")
+            self.log(f"new tip {self.chain.height} {self.chain.tip.hash[:12]}")
             if not batch:
                 await self.p2p.broadcast_inv(blocks=[self.chain.tip.hash], exclude=peer)
             if self._new_tip is not None:
@@ -168,26 +168,26 @@ class Node:
                 if await self.accept_block(b, peer, batch=True):
                     queue.append(h)
 
-    # ---------- transações ----------
+    # ---------- transactions ----------
     async def on_tx_message(self, peer, d):
         try:
             tx = Transaction.from_dict(d)
         except ValidationError as e:
-            return peer.misbehave(20, f"tx malformada: {e}")
+            return peer.misbehave(20, f"malformed tx: {e}")
         peer.known.add(tx.txid)
         try:
             await self.submit_tx(tx, peer)
         except ValidationError as e:
-            if "já está" not in str(e) and "já confirmada" not in str(e):
-                peer.misbehave(10, f"tx inválida: {e}")
+            if "already" not in str(e) and "already confirmed" not in str(e):
+                peer.misbehave(10, f"invalid tx: {e}")
 
     async def submit_tx(self, tx: Transaction, source=None) -> str:
-        """Valida, põe no mempool e difunde. Levanta ValidationError se rejeitada."""
+        """Validates, puts it in the mempool and broadcasts it. Raises ValidationError if rejected."""
         self.mempool.add(tx)
         await self.p2p.broadcast_inv(txs=[tx.txid], exclude=source)
         return tx.txid
 
-    # ---------- sincronização ----------
+    # ---------- synchronization ----------
     async def maybe_sync(self, peer):
         if peer.work > self.chain.total_work:
             await self.request_blocks(peer)
@@ -198,14 +198,14 @@ class Node:
         peer.sync_inflight = True
         await peer.send("getblocks", {"locator": self.chain.locator()})
 
-    # ---------- mineração ----------
+    # ---------- mining ----------
     def start_mining(self, address: str | None = None):
         if address:
             self.mine_to = address
         if not self.mine_to:
-            raise ValueError("endereço de recompensa não definido")
+            raise ValueError("reward address not set")
         if self.chain.params.consensus != "pow":
-            raise ValueError("mineração só existe em redes PoW")
+            raise ValueError("mining only exists on PoW networks")
         self.mining = True
         if self._mine_task is None or self._mine_task.done():
             self._mine_task = asyncio.create_task(self._mine_loop())
@@ -220,7 +220,7 @@ class Node:
         return blk, c.next_target()
 
     async def mine_one(self, address: str | None = None) -> Block:
-        """Minera exatamente um bloco agora (útil em testes e regtest) e o propaga."""
+        """Mines exactly one block now (useful in tests and regtest) and propagates it."""
         if address:
             self.mine_to = address
         blk, target = self.build_template()
@@ -233,7 +233,7 @@ class Node:
                 break
             nonce += MINE_CHUNK
         if not await self.accept_block(blk, None):
-            raise ValidationError("bloco minerado foi rejeitado")
+            raise ValidationError("mined block was rejected")
         return blk
 
     async def _mine_loop(self):
@@ -255,10 +255,10 @@ class Node:
                 if found is not None and self.chain.tip.hash == tip:
                     blk.nonce = found
                     if await self.accept_block(blk, None):
-                        self.log(f"bloco minerado: altura {blk.height} {blk.hash[:12]}")
+                        self.log(f"block mined: height {blk.height} {blk.hash[:12]}")
                 await asyncio.sleep(0)
             except asyncio.CancelledError:
                 return
-            except Exception as e:                       # um erro isolado não pode matar a mineração em silêncio
-                self.log(f"erro na mineração (tentando de novo em 2 s): {exc_label(e)}", "error")
+            except Exception as e:                       # an isolated error must not silently kill mining
+                self.log(f"mining error (retrying in 2 s): {exc_label(e)}", "error")
                 await asyncio.sleep(2)

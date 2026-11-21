@@ -1,11 +1,11 @@
 package br.winflux.wallet
 
-// GERADO a partir do código Python de referência (winflux/wallet/hd.py, transaction_builder.py). Não editar à mão.
+// GENERATED from the Python reference code (winflux/wallet/hd.py, transaction_builder.py). Do not edit by hand.
 object Vectors {
     const val MASTER = "0707070707070707070707070707070707070707070707070707070707070707"
     const val RECOVERY = "wflxk1-a4dq-obyh-a4dq-obyh-a4dq-obyh-a4dq-obyh-a4dq-obyh-a4dq-obyh-a4d6-ekq7-xm"
     const val DEST = "wflx1rcai4inpqwqajunpbl3ov5uvrbqsq2657wsifyq"
-    /** índice -> (pubkey hex, endereço) */
+    /** index -> (pubkey hex, address) */
     val KEYS = listOf(
         "6e00a5f5926014c48af8b88e3e05e2b2adb02a76041bb16ca07fea1a7b066479" to "wflx1kf3soyvgrrwpt4ndsfuyeapae2ete2kw56b7bzi",
         "b44cd822ce08bd31707fb78d443fcd72acadf5c9189dc1089f3be72cd9518d19" to "wflx1r2znmyjboqqacsmo2pcslhu6maqmgjpsuqqy3ya",
@@ -48,7 +48,7 @@ object Vectors {
         "ef4aaaa7e76702dee127ea087a7e0a7428744e60e83ea3ffdde3620a883bbd9c" to "wflx1qcb24k47cl2ewumtq7lin6n3o46qbkb4bdcrgjq",
         "cc0b3f8c954ccd614edb3bf49bd8a337cd4ff9881ef62bb7066b1d7ddacfb9b9" to "wflx1yiic7m6hygclf3fc5kwkr6bdxayggfzqlyqvkna"
     )
-    /** txid, índice, valor, endereço */
+    /** txid, index, value, address */
     val UTXOS = listOf(
         listOf("1111111111111111111111111111111111111111111111111111111111111111", 0, 500000000L, "wflx1kf3soyvgrrwpt4ndsfuyeapae2ete2kw56b7bzi"),
         listOf("2222222222222222222222222222222222222222222222222222222222222222", 1, 300000000L, "wflx1r2znmyjboqqacsmo2pcslhu6maqmgjpsuqqy3ya"),

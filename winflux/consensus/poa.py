@@ -1,7 +1,7 @@
-"""Proof of Authority em rodízio — SOMENTE para a testnet local.
+"""Round-robin Proof of Authority — ONLY for the local testnet.
 
-Não é descentralizado: a lista de autoridades é fixa no gênese. Serve para
-validar P2P, UTXO e sincronização antes do PoW (Etapa 5).
+It is not decentralized: the authority list is fixed in the genesis. It serves to
+validate P2P, UTXO and synchronization before PoW (Stage 5).
 """
 from ..blockchain.block import Block
 from ..blockchain.params import ChainParams
@@ -19,21 +19,21 @@ class ProofOfAuthority(Consensus):
     def expected_producer(height: int, params: ChainParams) -> str:
         auths = params.authorities
         if not auths:
-            raise ValidationError("rede sem autoridades configuradas")
+            raise ValidationError("network without configured authorities")
         return auths[(height - 1) % len(auths)]
 
     def verify_block(self, block: Block, prev: Block, params: ChainParams, view=None) -> None:
         if block.producer != self.expected_producer(block.height, params):
-            raise ValidationError("produtor não é o da vez")
+            raise ValidationError("producer is not the one whose turn it is")
         if not block.signature:
-            raise ValidationError("bloco sem assinatura")
+            raise ValidationError("block without a signature")
         if not verify_signature(bytes.fromhex(block.producer),
                                 bytes.fromhex(block.signature),
                                 BLOCK_SIG_DOMAIN + bytes.fromhex(block.hash)):
-            raise ValidationError("assinatura do bloco inválida")
+            raise ValidationError("invalid block signature")
 
     def seal(self, block: Block, keypair: KeyPair) -> Block:
         if keypair.public_hex != block.producer:
-            raise ValidationError("chave não é a do produtor do bloco")
+            raise ValidationError("key is not the block producer's")
         block.signature = keypair.sign(BLOCK_SIG_DOMAIN + bytes.fromhex(block.hash)).hex()
         return block

@@ -1,137 +1,137 @@
-# Pagamentos offline na Winflux — especificação e modelo de ameaças (Etapa 3b-0)
+# Offline payments in Winflux — specification and threat model (Stage 3b-0)
 
-Estado: **Revisão 2. Camada de consenso (3b-1) IMPLEMENTADA e testada**: tipos `vault_open`, `voucher_claim`,
-`vault_refund`, registro de cofres com undo, voucher binário (175 B), Ed25519 e P-256 (S baixo), coinbase com hash do
-bloco anterior. **Ainda NÃO implementados:** verificador offline do receptor, pedido/recibo, checkpoints e provas de
-cofre (3b-2/3b-3), transporte QR/BLE/NFC, chaves de vaga pós-quânticas (§15, decisão 6) e hardware Android.
+Status: **Revision 2. Consensus layer (3b-1) IMPLEMENTED and tested**: types `vault_open`, `voucher_claim`,
+`vault_refund`, vault registry with undo, binary voucher (175 B), Ed25519 and P-256 (low S), coinbase with the previous
+block hash. **NOT yet implemented:** receiver's offline verifier, request/receipt, checkpoints and vault proofs
+(3b-2/3b-3), QR/BLE/NFC transport, post-quantum vault keys (§15, decision 6) and Android hardware.
 
-> **Atualização (aprovação das notas transferíveis):** a decisão "sem transitividade" deste documento foi substituída por
-> `offline-chained-payments.md`. Cofres/vouchers continuam como base; o voucher é o caso particular de nota raiz com saída final.
-> A regra de compensação foi endurecida (R1-R9, `blockchain/exposure.py`) após a descoberta de um bug de reapresentação.
+> **Update (approval of transferable notes):** this document's "no transitivity" decision was replaced by
+> `offline-chained-payments.md`. Vaults/vouchers remain the base; the voucher is the particular case of a root note with a final output.
+> The compensation rule was hardened (R1-R9, `blockchain/exposure.py`) after a resubmission bug was discovered.
 
-### Revisão 2 — o que mudou e por quê
-A revisão adversarial da Revisão 1 encontrou três falhas, corrigidas abaixo:
-1. **`vault_close` removido.** Um dono podia fechar o cofre logo depois da abertura e continuar pagando
-   offline; receptores com prova antiga não sabiam que o prazo real (`fechamento + janela`) já era curto.
-   Agora só existe a expiração: o prazo de claim é sempre `expires_height + claim_window` e o TTL mínimo é curto.
-2. **`voucher_hash` agora cobre só o corpo do voucher**, não a assinatura. Com ECDSA P-256 (maleável), um
-   terceiro poderia reapresentar o mesmo voucher com outra assinatura válida; a cadeia o trataria como
-   "voucher distinto" e pagaria do colateral. Além disso, assinaturas P-256 devem ter **S baixo** (obrigatório).
-3. **A chave de dispositivo `D` é pública na cadeia** (o receptor precisa dela), logo é alvo de um computador
-   quântico relevante, que forjaria vouchers contra todos os cofres abertos. Decisão pendente de aprovação (§15):
-   chaves de uso único baseadas só em SHA-256 (LMS/LM-OTS), uma por vaga, com a cadeia guardando apenas a raiz de Merkle.
-Também: coinbase deve comprometer o hash do bloco anterior (§12) para não haver txids de coinbase iguais entre redes.
- Os números marcados
-"(a calibrar)" são valores iniciais de testnet, não decisões finais.
+### Revision 2 — what changed and why
+The adversarial review of Revision 1 found three flaws, fixed below:
+1. **`vault_close` removed.** An owner could close the vault right after opening it and keep paying
+   offline; receivers with an old proof did not know the real deadline (`close + window`) was already short.
+   Now only expiry exists: the claim deadline is always `expires_height + claim_window` and the minimum TTL is short.
+2. **`voucher_hash` now covers only the voucher body**, not the signature. With ECDSA P-256 (malleable), a
+   third party could resubmit the same voucher with another valid signature; the chain would treat it as a
+   "distinct voucher" and pay from the collateral. In addition, P-256 signatures must have a **low S** (mandatory).
+3. **The device key `D` is public on the chain** (the receiver needs it), so it is a target for a relevant quantum
+   computer, which would forge vouchers against every open vault. Decision pending approval (§15):
+   single-use keys based only on SHA-256 (LMS/LM-OTS), one per slot, with the chain storing only the Merkle root.
+Also: the coinbase must commit to the previous block hash (§12) so there are no equal coinbase txids across networks.
+ The numbers marked
+"(to be calibrated)" are initial testnet values, not final decisions.
 
-> Nenhuma assinatura digital impede, sozinha, que quem controla uma chave assine duas
-> transferências conflitantes quando está desconectado. Este documento não promete segurança
-> absoluta: ele separa o que o protocolo **garante**, o que **depende de hardware** e o que
-> **permanece como risco**.
+> No digital signature, by itself, prevents whoever controls a key from signing two
+> conflicting transfers while disconnected. This document does not promise absolute
+> security: it separates what the protocol **guarantees**, what **depends on hardware** and what
+> **remains as risk**.
 
-## 1. Objetivo e não-objetivos
+## 1. Goal and non-goals
 
-Objetivo: duas pessoas, ambas sem internet, transferem WFLX por QR Code, BLE ou NFC, com
-assinatura no aparelho de origem, armazenamento e comprovante no destino, liquidação posterior
-na blockchain, proteção contra reuso e estados explícitos.
+Goal: two people, both without internet, transfer WFLX by QR Code, BLE or NFC, with
+signing on the originating device, storage and receipt on the destination, later settlement
+on the blockchain, protection against reuse and explicit states.
 
-Não-objetivos (decisões de projeto):
-- **Sem "nível 0" como pagamento.** Uma transação assinada comum nunca é aceita como *pagamento* offline: sem
-  reserva prévia na cadeia o receptor não tem como avaliar o risco de gasto duplo. Ela pode, no máximo, ser
-  guardada como **recebimento pendente sem garantia** (`PENDENTE_SEM_GARANTIA`): não vira saldo, não libera
-  bem ou serviço, e a interface nunca a mostra como "pago".
-- **Sem transitividade.** Valor recebido offline só se torna gastável depois do claim confirmado.
-  Vouchers não são reencaminháveis.
-- **Sem autoridade central** (sem mint, sem servidor que registre fichas).
-- Privacidade forte (e-cash cego) fica fora desta fase.
+Non-goals (design decisions):
+- **No "level 0" as payment.** An ordinary signed transaction is never accepted as an offline *payment*: without a prior
+  reservation on the chain the receiver cannot assess the double-spend risk. At most it can be
+  kept as a **pending receipt without guarantee** (`PENDING_NO_GUARANTEE`): it does not become balance, does not release
+  goods or services, and the interface never shows it as "paid".
+- **No transitivity.** Value received offline only becomes spendable after the claim is confirmed.
+  Vouchers are not forwardable.
+- **No central authority** (no mint, no server that registers tokens).
+- Strong privacy (blind e-cash) is out of scope for this phase.
 
-## 2. Terminologia
+## 2. Terminology
 
-| Termo | Significado |
+| Term | Meaning |
 |---|---|
-| Cofre (vault) | Estado de consenso que trava valor + colateral para pagamentos offline |
-| Vaga (slot) | Unidade do cofre; paga no máximo uma vez; tem teto de valor |
-| Chave de dispositivo `D` | Chave que assina vouchers; pode estar em hardware. Ed25519 ou P-256 |
-| Chave do dono | Chave da carteira comum; controla abertura, fechamento e devolução |
-| Voucher | Promessa assinada por `D`: "a vaga `i` do cofre `V` paga `a` ao endereço `R`" |
-| Claim | Transação on-chain que resgata um voucher |
-| Colateral | Valor adicional travado por vaga, usado para compensar vítimas de duplicidade |
-| Checkpoint | Compromisso assinado pelas autoridades com a raiz do registro de cofres |
+| Vault | Consensus state that locks value + collateral for offline payments |
+| Slot | Unit of the vault; pays at most once; has a value cap |
+| Device key `D` | Key that signs vouchers; may be in hardware. Ed25519 or P-256 |
+| Owner key | Key of the ordinary wallet; controls opening, closing and refund |
+| Voucher | Promise signed by `D`: "slot `i` of vault `V` pays `a` to address `R`" |
+| Claim | On-chain transaction that redeems a voucher |
+| Collateral | Additional value locked per slot, used to compensate victims of duplicity |
+| Checkpoint | Commitment signed by the authorities with the root of the vault registry |
 
-## 3. Garantias, dependências e riscos
+## 3. Guarantees, dependencies and risks
 
-**G — garantido pelo protocolo (sem hardware especial):**
-- G1. O valor de um cofre não pode ser gasto online em paralelo (está travado no registro).
-- G2. Cada vaga paga o valor cheio no máximo uma vez (`vault_id, slot` único).
-- G3. Um voucher só vale para o receptor, o pedido e a rede para os quais foi emitido.
-- G4. O receptor consegue verificar a autenticidade do voucher e a existência do cofre sem internet.
-- G5. A liquidação é determinística: todos os nós chegam ao mesmo resultado.
-- G6. Quem foi lesado por duplicidade é compensado pelo colateral da vaga, até o seu limite.
-- G7. O dono nunca é lesado pelo receptor; se perder o aparelho, recupera o saldo após a janela.
+**G — guaranteed by the protocol (without special hardware):**
+- G1. A vault's value cannot be spent online in parallel (it is locked in the registry).
+- G2. Each slot pays the full value at most once (`vault_id, slot` unique).
+- G3. A voucher is only valid for the receiver, the request and the network it was issued for.
+- G4. The receiver can verify the voucher's authenticity and the vault's existence without internet.
+- G5. Settlement is deterministic: all nodes reach the same result.
+- G6. Whoever was harmed by duplicity is compensated by the slot's collateral, up to its limit.
+- G7. The owner is never harmed by the receiver; if they lose the device, they recover the balance after the window.
 
-**H — depende de hardware seguro:**
-- H1. Impedir que a chave `D` seja copiada para outro aparelho (chave não exportável + atestação).
-- H2. Impedir reuso de vaga após restaurar backup (chave de uso único por voucher, ou contador em
-  elemento seguro).
+**H — depends on secure hardware:**
+- H1. Preventing the key `D` from being copied to another device (non-exportable key + attestation).
+- H2. Preventing reuse of a slot after restoring a backup (single-use key per voucher, or a counter in a
+  secure element).
 
-**R — risco que permanece:**
-- R1. Sem hardware, o atacante pode vender a mesma vaga a `m` receptores. Com teto `c` e colateral
-  `ρ·c`, ele obtém bens de `m·c` e perde no máximo `(1+ρ)·c`; compensa quando `m > 1+ρ`. As
-  vítimas perdem até `(m−1−ρ)·c`. **O colateral dissuade, não impede.**
-- R2. O receptor perde o direito se não liquidar dentro da janela.
-- R3. Compromisso do hardware (TEE/SE quebrado, atestação revogada sem o receptor saber).
-- R4. Vínculo de identidades (cofre, endereços, recibos) reduz a privacidade.
-- R5. Confiança nas autoridades para checkpoints (PoA) até o PoW definir outra solução.
-- R6. Em caso de fraude, **todo** o colateral restante do cofre é queimado (inclusive o de vagas honestas). Dissuade, mas
-  pune também o dono cuja chave foi clonada por um ladrão. Alternativa a avaliar: queimar só o da vaga fraudada.
+**R — risk that remains:**
+- R1. Without hardware, the attacker can sell the same slot to `m` receivers. With cap `c` and collateral
+  `ρ·c`, they obtain goods worth `m·c` and lose at most `(1+ρ)·c`; it pays off when `m > 1+ρ`. The
+  victims lose up to `(m−1−ρ)·c`. **The collateral deters, it does not prevent.**
+- R2. The receiver loses the right if they do not settle within the window.
+- R3. Hardware compromise (broken TEE/SE, attestation revoked without the receiver knowing).
+- R4. Linking of identities (vault, addresses, receipts) reduces privacy.
+- R5. Trust in the authorities for checkpoints (PoA) until PoW defines another solution.
+- R6. In case of fraud, **all** of the vault's remaining collateral is burned (including that of honest slots). It deters, but
+  also punishes the owner whose key was cloned by a thief. Alternative to evaluate: burn only the defrauded slot's.
 
-## 4. Níveis de segurança do pagador
+## 4. Payer security levels
 
-| Nível | Chave `D` | Impede clonagem | Impede rollback | Uso |
+| Level | Key `D` | Prevents cloning | Prevents rollback | Use |
 |---|---|---|---|---|
-| L1 | Software (PWA, Android sem hardware adequado) | Não | Não | Valores baixos; colateral dissuade |
-| L2 | Hardware atestada, **uma chave por voucher** com uso único | Sim, se não exportável | Sim, se o hardware impõe o limite | Valores médios |
-| L3 | Elemento seguro com saldo/contador internos | Sim | Sim | Valores altos (futuro) |
+| L1 | Software (PWA, Android without suitable hardware) | No | No | Low values; collateral deters |
+| L2 | Attested hardware, **one key per voucher** with single use | Yes, if non-exportable | Yes, if the hardware enforces the limit | Medium values |
+| L3 | Secure element with internal balance/counter | Yes | Yes | High values (future) |
 
-Observações verificadas na documentação pública (ver §14): o Android 12 (API 31) permite limitar
-usos de uma chave e apaga a chave ao esgotar o contador; há sinalizadores para saber se o hardware
-impõe isso. A atestação tem cadeia mais longa e de tamanho variável, certificados de curta duração e
-raiz ECDSA P-384 (além da RSA antiga). Ed25519 em hardware **não foi verificado**: por isso `D` pode
-ser P-256.
+Observations verified in public documentation (see §14): Android 12 (API 31) allows limiting
+the uses of a key and erases the key when the counter is exhausted; there are flags to know whether the hardware
+enforces this. Attestation has a longer chain of variable size, short-lived certificates and
+an ECDSA P-384 root (besides the old RSA one). Ed25519 in hardware **has not been verified**: that is why `D` may
+be P-256.
 
-### Política do receptor (limites por voucher — valores de testnet, a calibrar)
+### Receiver policy (limits per voucher — testnet values, to be calibrated)
 
-| Nível comprovado | Teto por voucher | Exige |
+| Proven level | Cap per voucher | Requires |
 |---|---|---|
-| L1 | 5 WFLX | Cofre ativo, colateral ≥ 100 % |
-| L2 | 100 WFLX | + atestação válida, nível de segurança TEE/StrongBox, uso único atestado |
-| L3 | 1.000 WFLX | + atestação do elemento seguro |
+| L1 | 5 WFLX | Active vault, collateral ≥ 100 % |
+| L2 | 100 WFLX | + valid attestation, TEE/StrongBox security level, attested single use |
+| L3 | 1,000 WFLX | + secure element attestation |
 
-O receptor pode adotar limites mais rígidos. Nenhum nível é aceito sem prova de cofre.
+The receiver may adopt stricter limits. No level is accepted without a vault proof.
 
-## 5. Parâmetros de rede (novos, em `ChainParams`)
+## 5. Network parameters (new, in `ChainParams`)
 
-| Parâmetro | Valor inicial | Observação |
+| Parameter | Initial value | Note |
 |---|---|---|
-| `target_block_time` | 5 s (devnet) / 60 s (alvo público) | Converte tempo ↔ altura |
-| `vault_max_slots` | 64 | Limita o estado por cofre |
-| `vault_collateral_min_pct` | 100 (ρ=1) | Colateral mínimo por vaga |
-| `vault_ttl_min_blocks` | 1 dia | Vida mínima (curta, para o dono recuperar o saldo cedo) |
-| `vault_ttl_max_blocks` | 30 dias | Vida máxima antes da expiração |
-| `claim_window_blocks` | 7 dias | Janela de contestação após fechamento/expiração |
-| `min_voucher` | 10 × `min_fee` | Abaixo disso o claim não compensa a taxa |
-| `vault_max_value` | 10.000 WFLX | Teto de exposição por cofre |
-| `checkpoint_interval` | 100 blocos | Frequência dos checkpoints |
-| `receiver_min_margin` | 48 h | Margem mínima até o fim da janela para o receptor aceitar |
+| `target_block_time` | 5 s (devnet) / 60 s (public target) | Converts time ↔ height |
+| `vault_max_slots` | 64 | Bounds the state per vault |
+| `vault_collateral_min_pct` | 100 (ρ=1) | Minimum collateral per slot |
+| `vault_ttl_min_blocks` | 1 day | Minimum life (short, so the owner recovers the balance early) |
+| `vault_ttl_max_blocks` | 30 days | Maximum life before expiry |
+| `claim_window_blocks` | 7 days | Contestation window after closing/expiry |
+| `min_voucher` | 10 × `min_fee` | Below this the claim does not pay for the fee |
+| `vault_max_value` | 10,000 WFLX | Exposure cap per vault |
+| `checkpoint_interval` | 100 blocks | Checkpoint frequency |
+| `receiver_min_margin` | 48 h | Minimum margin to the end of the window for the receiver to accept |
 
-## 6. Estado de consenso: registro de cofres
+## 6. Consensus state: vault registry
 
-Registro derivado da cadeia (reconstruído e revalidado na carga, com undo por bloco), ao lado do
+Registry derived from the chain (rebuilt and revalidated on load, with undo per block), next to the
 UTXO set.
 
 ```text
 Vault {
-  vault_id        = txid da transação vault_open
+  vault_id        = txid of the vault_open transaction
   owner_address, refund_address
   device_key, key_type ("ed25519" | "p256")
   opened_height, expires_height, state ∈ {OPEN, CLOSED}
@@ -140,182 +140,182 @@ Vault {
 }
 ```
 
-**Contabilidade da oferta:** `oferta = Σ UTXO + Σ (caps livres + colateral restante dos cofres)`.
-Colateral queimado reduz a oferta. O teto `max_supply` vale sobre essa soma.
+**Supply accounting:** `supply = Σ UTXO + Σ (free caps + remaining collateral of the vaults)`.
+Burned collateral reduces the supply. The `max_supply` cap applies to that sum.
 
-### 6.1 Tipos de transação (novo campo `kind` + `payload`, validação estrita)
+### 6.1 Transaction types (new `kind` + `payload` field, strict validation)
 
-**`vault_open`** — entradas comuns financiam o cofre.
+**`vault_open`** — ordinary inputs fund the vault.
 - payload: `device_key, key_type, slots:[cap…], collateral_pct, ttl_blocks, refund_address, pop`
-- `pop` = assinatura de `D` sobre o hash do corpo (prova de posse; impede registrar chave alheia).
-- Regras: `1 ≤ N ≤ vault_max_slots`; `cap_i ≥ min_voucher`; `collateral_pct ≥ mínimo`;
-  `vault_ttl_min ≤ ttl ≤ vault_ttl_max`; `Σ(cap_i + colateral_i) ≤ vault_max_value`; saídas = só troco;
-  entradas = `Σ(cap_i + col_i) + saídas + taxa`; `expires_height = h + ttl`.
+- `pop` = signature of `D` over the body hash (proof of possession; prevents registering someone else's key).
+- Rules: `1 ≤ N ≤ vault_max_slots`; `cap_i ≥ min_voucher`; `collateral_pct ≥ minimum`;
+  `vault_ttl_min ≤ ttl ≤ vault_ttl_max`; `Σ(cap_i + collateral_i) ≤ vault_max_value`; outputs = change only;
+  inputs = `Σ(cap_i + col_i) + outputs + fee`; `expires_height = h + ttl`.
 
-**`voucher_claim`** — sem entradas; qualquer pessoa pode submeter.
+**`voucher_claim`** — no inputs; anyone can submit.
 - payload: `voucher` (175 bytes, §7) .
-- Regras: cofre existe e `height ≤ limite_de_claim` (§6.2); `slot < N`; `min_voucher ≤ amount ≤ cap`;
-  assinatura de `D` válida; saída única `(amount − min_fee) → receiver` e taxa exatamente `min_fee`.
-- Efeito, vaga livre: paga de `cap`; marca `claimed_by = H(voucher)`; o resto de `cap` volta no refund.
-- Efeito, vaga já usada por outro voucher: se `collateral_left > 0`, paga
-  `min(amount, collateral_left) − min_fee` do colateral e marca `fraud = true` (se esse valor for ≤ 0, o claim é rejeitado). Se for o **mesmo**
-  voucher: rejeitado (reuso).
+- Rules: the vault exists and `height ≤ claim_limit` (§6.2); `slot < N`; `min_voucher ≤ amount ≤ cap`;
+  valid signature of `D`; single output `(amount − min_fee) → receiver` and a fee of exactly `min_fee`.
+- Effect, free slot: pays from `cap`; sets `claimed_by = H(voucher)`; the rest of `cap` comes back in the refund.
+- Effect, slot already used by another voucher: if `collateral_left > 0`, pays
+  `min(amount, collateral_left) − min_fee` from the collateral and sets `fraud = true` (if that value is ≤ 0, the claim is rejected). If it is the **same**
+  voucher: rejected (reuse).
 
-**`vault_close` — REMOVIDO na Revisão 2** (ver acima). O cofre termina apenas por expiração em `expires_height`;
-quem quiser recuperar o saldo cedo abre cofres com TTL curto.
+**`vault_close` — REMOVED in Revision 2** (see above). The vault ends only by expiry at `expires_height`;
+whoever wants to recover the balance early opens vaults with a short TTL.
 
-**`vault_refund`** — sem assinatura; qualquer um pode submeter após o fim da janela.
-- Efeito: devolve ao `refund_address` as caps livres e a diferença `cap − amount` das vagas pagas;
-  devolve o colateral restante se `fraud = false`; **queima** o colateral restante se `fraud = true`.
-  Taxa descontada do total devolvido.
+**`vault_refund`** — no signature; anyone can submit after the end of the window.
+- Effect: returns to `refund_address` the free caps and the difference `cap − amount` of the paid slots;
+  returns the remaining collateral if `fraud = false`; **burns** the remaining collateral if `fraud = true`.
+  The fee is deducted from the total returned.
 
-### 6.2 Limite de claim
-`limite = expires_height + claim_window`, sempre. Como `expires_height` é fixado na abertura e consta na
-prova do cofre, o receptor sabe o prazo real. Nada que o dono faça depois encurta esse prazo, então ele não
-consegue pagar offline e retirar o saldo antes de o receptor sincronizar.
+### 6.2 Claim limit
+`limit = expires_height + claim_window`, always. Since `expires_height` is fixed at opening and appears in the
+vault proof, the receiver knows the real deadline. Nothing the owner does afterwards shortens that deadline, so they
+cannot pay offline and withdraw the balance before the receiver syncs.
 
-### 6.3 Ordem e disputa
-Dentro de um bloco vale a ordem das transações; entre blocos, a ordem da cadeia. Na primeira
-liquidação da vaga paga-se o valor; as seguintes pagam do colateral.
+### 6.3 Order and dispute
+Within a block the transaction order applies; across blocks, the chain order. At the first
+settlement of the slot the value is paid; the following ones pay from the collateral.
 
-## 7. Formatos de mensagem (binário fixo, sem ambiguidade)
+## 7. Message formats (fixed binary, no ambiguity)
 
-Escolha: layout binário fixo para o voucher assinado (≈175 bytes, cabe em QR único); sem dependência de CBOR.
+Choice: fixed binary layout for the signed voucher (≈175 bytes, fits in a single QR); no CBOR dependency.
 
 ```text
 voucher_body (111 bytes) =
   version(1) ‖ chain_id_hash(32) ‖ vault_id(32) ‖ slot(u16 BE) ‖ amount(u64 BE)
   ‖ receiver_hash160(20) ‖ request_id(16)
 voucher = voucher_body ‖ signature(64)
-assinatura de D sobre: "WFLX-VOUCHER-V1" ‖ voucher_body
-voucher_hash = SHA-256("WFLX-VOUCHER-ID-V1" ‖ voucher_body)      # SEM a assinatura (anti-maleabilidade)
+signature of D over: "WFLX-VOUCHER-V1" ‖ voucher_body
+voucher_hash = SHA-256("WFLX-VOUCHER-ID-V1" ‖ voucher_body)      # WITHOUT the signature (anti-malleability)
 ```
-(P-256: assinatura bruta `r ‖ s` de 64 bytes, com **S ≤ n/2 obrigatório**; clientes Android devem
-normalizar a assinatura DER do Keystore para S baixo antes de enviar.)
+(P-256: raw `r ‖ s` signature of 64 bytes, with **S ≤ n/2 mandatory**; Android clients must
+normalize the Keystore's DER signature to a low S before sending.)
 
-**Pedido** (receptor → pagador): `version, chain_id_hash, receiver_address, amount?, request_id (16 B aleatórios),
-eph_pub (X25519), expiração_do_pedido`.
+**Request** (receiver → payer): `version, chain_id_hash, receiver_address, amount?, request_id (16 random B),
+eph_pub (X25519), request_expiry`.
 
-**Voucher + provas** (pagador → receptor, cifrado): `voucher`, `prova_do_cofre`, `atestação?`.
+**Voucher + proofs** (payer → receiver, encrypted): `voucher`, `vault_proof`, `attestation?`.
 
-**Recibo** (receptor → pagador): `voucher_hash, request_id, receiver_pubkey, assinatura` sobre
+**Receipt** (receiver → payer): `voucher_hash, request_id, receiver_pubkey, signature` over
 `"WFLX-RECEIPT-V1" ‖ voucher_hash ‖ request_id`.
 
-**Prova do cofre** (centenas de bytes a ~1 KB): registro do cofre + caminho Merkle até a
-`vault_root` de um **checkpoint** + certificado do checkpoint (altura, hash do bloco, `vault_root`, assinaturas das
-autoridades). O cofre só é utilizável depois de entrar num checkpoint (atraso de ativação ≤ `checkpoint_interval`).
+**Vault proof** (hundreds of bytes to ~1 KB): vault record + Merkle path to the
+`vault_root` of a **checkpoint** + checkpoint certificate (height, block hash, `vault_root`, signatures of the
+authorities). The vault is only usable after it enters a checkpoint (activation delay ≤ `checkpoint_interval`).
 
-**Atestação**: cadeia X.509 (2–5 KB), enviada uma vez e guardada pelo receptor (cache por hash de `D`).
+**Attestation**: X.509 chain (2–5 KB), sent once and kept by the receiver (cache by hash of `D`).
 
-**Canal**: X25519 efêmero + ChaCha20-Poly1305 na camada de aplicação, independente do transporte;
-o `request_id` e o endereço do receptor entram no contexto da chave de sessão.
+**Channel**: ephemeral X25519 + ChaCha20-Poly1305 at the application layer, independent of the transport;
+the `request_id` and the receiver's address enter the session key context.
 
-**Transportes**
-- QR: quadros animados quando necessário (voucher puro cabe em um QR).
-- BLE: serviço GATT/L2CAP com fragmentação; pareamento não é pré-requisito.
-- NFC: Android nativo (leitor + emulação de cartão, HCE). Não disponível na PWA.
+**Transports**
+- QR: animated frames when needed (a plain voucher fits in one QR).
+- BLE: GATT/L2CAP service with fragmentation; pairing is not a prerequisite.
+- NFC: native Android (reader + card emulation, HCE). Not available in the PWA.
 
-## 8. Verificação pelo receptor (checklist; qualquer falha rejeita)
+## 8. Verification by the receiver (checklist; any failure rejects)
 
-1. `chain_id_hash`, versão e comprimentos corretos.
-2. `receiver_hash160` e `request_id` iguais aos do pedido; valor igual ao combinado.
-3. Assinatura de `D` válida.
-4. Prova de cofre válida contra checkpoint assinado, **não mais antigo que o último checkpoint que o receptor já conhece**; cofre `OPEN`, sem `fraud`, fora da lista local de bloqueio.
+1. `chain_id_hash`, version and lengths correct.
+2. `receiver_hash160` and `request_id` equal to the request's; value equal to the agreed one.
+3. Valid signature of `D`.
+4. Valid vault proof against a signed checkpoint, **not older than the latest checkpoint the receiver already knows**; vault `OPEN`, without `fraud`, outside the local block list.
 5. `slot < N`, `min_voucher ≤ amount ≤ cap`.
-6. Vaga **não vista antes** no banco local do receptor (qualquer remetente).
-7. Margem: `limite_de_claim − altura_estimada ≥ receiver_min_margin`. A altura é estimada com o
-   relógio do **próprio receptor** e o último checkpoint. Nenhum tempo declarado pelo pagador é usado.
-8. Nível comprovado e teto por voucher (§4). Para L2/L3: atestação com raízes fixadas, lista de revogação em cache, nível de segurança do hardware, chave de uso único.
-9. (Opcional) troca de hashes de vagas vistas com receptores próximos.
+6. Slot **not seen before** in the receiver's local database (any sender).
+7. Margin: `claim_limit − estimated_height ≥ receiver_min_margin`. The height is estimated with the
+   receiver's **own** clock and the latest checkpoint. No time declared by the payer is used.
+8. Proven level and cap per voucher (§4). For L2/L3: attestation with pinned roots, cached revocation list, hardware security level, single-use key.
+9. (Optional) exchange of hashes of seen slots with nearby receivers.
 
-## 9. Estados
+## 9. States
 
-**Pagador:**
-`RASCUNHO → ASSINADA_OFFLINE → ENTREGUE → LIQUIDANDO → CONFIRMADA(n) → FINAL`
-Falhas: `EXPIRADA`, `CONFLITO_REJEITADO`, `COLATERAL_PERDIDO`.
-Regra de ouro: a vaga é gravada como usada **antes** de o voucher sair do aparelho (write-ahead).
-Se o aparelho travar no meio, a vaga se perde; ela nunca é reutilizada.
+**Payer:**
+`DRAFT → SIGNED_OFFLINE → DELIVERED → SETTLING → CONFIRMED(n) → FINAL`
+Failures: `EXPIRED`, `CONFLICT_REJECTED`, `COLLATERAL_LOST`.
+Golden rule: the slot is recorded as used **before** the voucher leaves the device (write-ahead).
+If the device crashes midway, the slot is lost; it is never reused.
 
-**Receptor:**
-`PEDIDO → RECEBIDA_NAO_VERIFICADA → ACEITA_OFFLINE(nível, teto) → CLAIM_ENVIADO → CONFIRMADA(n) → FINAL`
-Falhas: `REJEITADA(motivo)`, `CLAIM_REJEITADO → COMPENSADA | PERDA`, `PRAZO_PERDIDO`.
+**Receiver:**
+`REQUEST → RECEIVED_UNVERIFIED → ACCEPTED_OFFLINE(level, cap) → CLAIM_SENT → CONFIRMED(n) → FINAL`
+Failures: `REJECTED(reason)`, `CLAIM_REJECTED → COMPENSATED | LOSS`, `DEADLINE_MISSED`.
 
-`ACEITA_OFFLINE` aparece como **pendente**, nunca como saldo gastável. A interface mostra o prazo.
-Se um claim for desfeito por reorganização, o estado volta a `ACEITA_OFFLINE` com o mesmo prazo.
+`ACCEPTED_OFFLINE` shows up as **pending**, never as spendable balance. The interface shows the deadline.
+If a claim is undone by a reorganization, the state goes back to `ACCEPTED_OFFLINE` with the same deadline.
 
-## 10. Liquidação e conciliação
-1. O receptor, ao ficar online, submete `voucher_claim` (via API → mempool → bloco).
-2. O pagador, ao ficar online, compara os vouchers emitidos (log local write-ahead) com o estado do cofre.
-   Vaga paga a outro voucher, ou claim que não casa com o log, indica **clonagem ou rollback** → alerta e parada de uso do cofre.
-3. O cofre expira em `expires_height`; após `expires_height + claim_window`, `vault_refund`.
-4. O app do receptor avisa a contagem regressiva do prazo e submete o claim assim que houver rede.
+## 10. Settlement and reconciliation
+1. The receiver, on coming online, submits `voucher_claim` (via API → mempool → block).
+2. The payer, on coming online, compares the issued vouchers (local write-ahead log) with the vault state.
+   A slot paid to another voucher, or a claim that does not match the log, indicates **cloning or rollback** → alert and stop using the vault.
+3. The vault expires at `expires_height`; after `expires_height + claim_window`, `vault_refund`.
+4. The receiver's app warns of the deadline countdown and submits the claim as soon as there is a network.
 
-## 11. Modelo de ameaças
+## 11. Threat model
 
-| # | Ameaça | Mitigação | Residual |
+| # | Threat | Mitigation | Residual |
 |---|---|---|---|
-| T1 | Reapresentar o mesmo voucher a outro receptor | Vínculo a `receiver`/`request_id` | — |
-| T2 | Dois vouchers distintos para a mesma vaga a receptores distintos | Compensação por colateral; L2/L3 impedem | R1 em L1 |
-| T3 | Clonar a carteira em 2º celular | Chave `D` não exportável + atestação (L2/L3) | L1 aceita |
-| T4 | Restaurar backup e reusar a vaga | Chave de uso único por voucher / SE | Depende de hardware (H2) |
-| T5 | Retirar o saldo antes do claim | Sem fechamento antecipado; refund só após `expires_height + claim_window` | Saldo travado até lá |
-| T6 | Gastar o mesmo saldo online | Saldo travado no registro | — |
-| T7 | Reenviar o claim | Vaga marcada com hash do voucher | — |
-| T8 | Alterar valor/destino do voucher | Assinatura sobre todos os campos | — |
-| T9 | MITM/relay em BLE/NFC | Canal cifrado, confirmação de valor e endereço nas duas telas; pagamento vai ao endereço do receptor | Relay só faz ele pagar quem ele escolheu |
-| T10 | Atestação falsa, expirada ou revogada | Raízes fixadas; revogação em cache; política por nível | Revogação desatualizada |
-| T11 | Manipular o relógio do pagador | Nenhum tempo do pagador é confiado | — |
-| T12 | Spam de cofres/claims | Taxa mínima, `min_voucher`, `vault_max_value`, limite por bloco | A calibrar |
-| T13 | Receptor perde a janela | Alertas; janela longa | R2 |
-| T14 | Produtor reordena claims | PoA: autoridade confiável | PoW: ordem do minerador |
-| T15 | Remetente conluiado consigo mesmo | Compensação sai do colateral dele | Neutro |
-| T16 | Checkpoint forjado | Assinaturas das autoridades | R5 |
-| T17 | Rastreamento de identidade | Endereços novos por pedido | R4 |
-| T18 | Perda do aparelho | Refund ao dono após a janela | Fundos travados por até TTL+janela |
-| T19 | Voucher reapresentado com assinatura alterada (P-256 maleável) | Hash só do corpo; S baixo obrigatório | — |
-| T20 | Computador quântico forja vouchers com a chave pública `D` | Chaves de uso único por vaga baseadas em SHA-256 (§15, decisão 6) | Pendente até a decisão; sem isso, `D` é alvo |
+| T1 | Presenting the same voucher to another receiver | Binding to `receiver`/`request_id` | — |
+| T2 | Two distinct vouchers for the same slot to distinct receivers | Compensation by collateral; L2/L3 prevent it | R1 in L1 |
+| T3 | Cloning the wallet onto a 2nd phone | Non-exportable key `D` + attestation (L2/L3) | L1 accepts |
+| T4 | Restoring a backup and reusing the slot | Single-use key per voucher / SE | Depends on hardware (H2) |
+| T5 | Withdrawing the balance before the claim | No early close; refund only after `expires_height + claim_window` | Balance locked until then |
+| T6 | Spending the same balance online | Balance locked in the registry | — |
+| T7 | Resending the claim | Slot marked with the voucher hash | — |
+| T8 | Changing the voucher's value/destination | Signature over all the fields | — |
+| T9 | MITM/relay over BLE/NFC | Encrypted channel, value and address confirmation on both screens; payment goes to the receiver's address | A relay only makes them pay whoever they chose |
+| T10 | Fake, expired or revoked attestation | Pinned roots; cached revocation; policy per level | Stale revocation |
+| T11 | Manipulating the payer's clock | No payer time is trusted | — |
+| T12 | Spam of vaults/claims | Minimum fee, `min_voucher`, `vault_max_value`, per-block limit | To be calibrated |
+| T13 | Receiver misses the window | Alerts; long window | R2 |
+| T14 | Producer reorders claims | PoA: trusted authority | PoW: miner's order |
+| T15 | Sender colluding with themselves | Compensation comes out of their collateral | Neutral |
+| T16 | Forged checkpoint | Signatures of the authorities | R5 |
+| T17 | Identity tracking | New addresses per request | R4 |
+| T18 | Loss of the device | Refund to the owner after the window | Funds locked for up to TTL+window |
+| T19 | Voucher resubmitted with a changed signature (malleable P-256) | Hash of the body only; low S mandatory | — |
+| T20 | Quantum computer forges vouchers with the public key `D` | Single-use per-slot keys based on SHA-256 (§15, decision 6) | Pending until the decision; without it, `D` is a target |
 
-## 12. Compatibilidade com o código existente (planejado, **não executado**)
+## 12. Compatibility with the existing code (planned, **not executed**)
 
-Preservado sem mudança de comportamento: `crypto/*`, `units`, `blockchain/utxo.py` (UTXO),
-`wallet/*`, `node/storage.py`, os 103 testes.
+Preserved with no change in behavior: `crypto/*`, `units`, `blockchain/utxo.py` (UTXO),
+`wallet/*`, `node/storage.py`, the 103 tests.
 
-Mudanças previstas na Etapa 3b-1/3b-3:
-- `Transaction`: campos `kind` (padrão `"transfer"`) e `payload` (padrão `None`).
-- `Block`: `vault_root` no cabeçalho (padrão vazio); checkpoints.
-- `ChainParams`: parâmetros do §5.
-- `blockchain/vaults.py` (novo): registro + undo; `validation.py`: regras dos novos tipos.
-- `crypto/keys.py`: verificação P-256 (ECDSA) além de Ed25519.
-- Genesis e txids mudam de valor (campos novos); os testes não dependem de valores fixos, mas
-  isso será conferido ao implementar.
+Changes planned in Stage 3b-1/3b-3:
+- `Transaction`: fields `kind` (default `"transfer"`) and `payload` (default `None`).
+- `Block`: `vault_root` in the header (default empty); checkpoints.
+- `ChainParams`: the parameters of §5.
+- `blockchain/vaults.py` (new): registry + undo; `validation.py`: rules for the new types.
+- `crypto/keys.py`: P-256 (ECDSA) verification in addition to Ed25519.
+- Genesis and txids change value (new fields); the tests do not depend on fixed values, but
+  this will be checked at implementation.
 
-## 13. Plano de testes (critérios de aceite da 3b-1)
-Gasto duplo da mesma vaga; mesmo voucher reapresentado; voucher para outro receptor; assinatura
-adulterada em cada campo; claim após limite; claim dentro e fora da janela (`expires_height + claim_window`);
-refund antes do fim da janela rejeitado; voucher P-256 com S alto rejeitado e hash independente da assinatura; fraude com colateral parcial e esgotado; contabilidade da oferta
-(colateral queimado); teto de cofre; spam de cofres; reorganização desfazendo claim e refund;
-atomicidade de bloco inválido; determinismo entre dois nós reaplicando a mesma cadeia.
+## 13. Test plan (acceptance criteria of 3b-1)
+Double spend of the same slot; same voucher resubmitted; voucher for another receiver; signature
+tampered in each field; claim after the limit; claim inside and outside the window (`expires_height + claim_window`);
+refund before the end of the window rejected; P-256 voucher with high S rejected and hash independent of the signature; fraud with partial and exhausted collateral; supply accounting
+(burned collateral); vault cap; vault spam; reorganization undoing a claim and a refund;
+atomicity of an invalid block; determinism between two nodes replaying the same chain.
 
-## 14. Fontes consultadas (verificar novamente ao implementar)
-- Android: `KeyGenParameterSpec.Builder.setMaxUsageCount` (API 31) e sinalizadores
+## 14. Sources consulted (re-check when implementing)
+- Android: `KeyGenParameterSpec.Builder.setMaxUsageCount` (API 31) and flags
   `FEATURE_KEYSTORE_SINGLE_USE_KEY` / `FEATURE_KEYSTORE_LIMITED_USE_KEY` —
   https://learn.microsoft.com/en-us/dotnet/api/android.security.keystore.keygenparameterspec.builder.setmaxusagecount
 - Android Developers Blog, "Upgrading Android Attestation: Remote Provisioning" (2022) —
   https://android-developers.googleblog.com/2022/03/upgrading-android-attestation-remote.html
-- Rotação da raiz de atestação (RSA → ECDSA P-384), análise de terceiros —
+- Attestation root rotation (RSA → ECDSA P-384), third-party analysis —
   https://protectt.ai/blog/android-key-attestation-root-certificate-rotation
-- Chrome, Web NFC (somente NDEF, sem ponto a ponto nem HCE; contexto seguro) —
+- Chrome, Web NFC (NDEF only, no peer-to-peer or HCE; secure context) —
   https://developer.chrome.com/docs/capabilities/nfc
 
-## 15. Decisões que precisam da sua aprovação
-1. Voucher em **layout binário fixo** (175 bytes) em vez de CBOR.
-2. Valores iniciais do §5 e os tetos por nível do §4.
-3. `D` poder ser **Ed25519 ou P-256**.
-4. **Checkpoints assinados por autoridades** para provas offline (válidos na testnet PoA; o PoW exigirá nova solução).
-5. Sem transitividade offline e sem "nível 0".
-6. **Chaves de vaga resistentes a computador quântico:** cada vaga com chave de uso único baseada em SHA-256
-   (LMS/LM-OTS, RFC 8554 e NIST SP 800-208; confirmar ao implementar), com a cadeia guardando só a raiz de Merkle e
-   o voucher carregando ~1,1-1,3 KB de assinatura. Opcionalmente somada a uma assinatura P-256 de hardware.
-7. **Coinbase comprometendo o hash do bloco anterior** (campo na carga útil da Fase 1), para que redes distintas nunca
-   produzam o mesmo txid de coinbase.
-8. **Escopo da queima de colateral** em caso de fraude: todo o cofre (implementado) ou só a vaga fraudada (ver R6).
+## 15. Decisions that need your approval
+1. Voucher in a **fixed binary layout** (175 bytes) instead of CBOR.
+2. Initial values of §5 and the per-level caps of §4.
+3. `D` may be **Ed25519 or P-256**.
+4. **Authority-signed checkpoints** for offline proofs (valid on the PoA testnet; PoW will require a new solution).
+5. No offline transitivity and no "level 0".
+6. **Quantum-resistant vault keys:** each slot with a single-use key based on SHA-256
+   (LMS/LM-OTS, RFC 8554 and NIST SP 800-208; confirm at implementation), with the chain storing only the Merkle root and
+   the voucher carrying ~1.1-1.3 KB of signature. Optionally combined with a hardware P-256 signature.
+7. **Coinbase committing to the previous block hash** (field in the Phase 1 payload), so that distinct networks never
+   produce the same coinbase txid.
+8. **Scope of the collateral burn** in case of fraud: the whole vault (implemented) or only the defrauded slot (see R6).

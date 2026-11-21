@@ -1,4 +1,4 @@
-"""Fase 1 (3b-1): cofres offline — abertura, claim, duplicidade, devolução, supply, undo."""
+"""Phase 1 (3b-1): offline vaults — opening, claim, duplicates, refund, supply, undo."""
 import json
 from dataclasses import replace
 
@@ -57,7 +57,7 @@ def advance(chain, keys, n):
 
 
 def to_deadline(chain, keys, vid):
-    """Minera até a altura = prazo final de claims (último bloco em que ainda vale)."""
+    """Mines up to the height = final claim deadline (the last block in which it is still valid)."""
     advance(chain, keys, V.claim_deadline(chain.get_vault(vid), chain.params) - chain.height)
 
 
@@ -65,7 +65,7 @@ def balances(chain, keys):
     return sum(chain.balance(k.address) for k in keys.values())
 
 
-# ------------------------------------------------------------ abertura
+# ------------------------------------------------------------ opening
 def test_open_locks_funds_and_preserves_supply(keys, dev):
     chain = vchain(keys)
     before = chain.total_supply()
@@ -73,10 +73,10 @@ def test_open_locks_funds_and_preserves_supply(keys, dev):
     v = chain.get_vault(vid)
     assert v.state == "OPEN" and len(v.slots) == 2 and not v.fraud
     assert v.expires_height == v.opened_height + 5 and v.opened_height == 1
-    assert chain.vaults.total_locked == 40 * WFLX                  # 2 x (10 cap + 10 colateral)
-    assert chain.total_supply() == before + 50 * WFLX              # só a recompensa do bloco
+    assert chain.vaults.total_locked == 40 * WFLX                  # 2 x (10 cap + 10 collateral)
+    assert chain.total_supply() == before + 50 * WFLX              # only the block reward
     assert balances(chain, keys) + chain.vaults.total_locked == chain.total_supply()
-    assert chain.balance(keys["alice"].address) < 5_000_000 * WFLX - 40 * WFLX   # travado + taxa
+    assert chain.balance(keys["alice"].address) < 5_000_000 * WFLX - 40 * WFLX   # locked + fee
 
 
 def forge_open(chain, keys, dev, over=None, pop_signer=None, fee=200_000, sign_inputs=True):
@@ -105,18 +105,18 @@ def test_forge_helper_accepts_baseline(keys, dev):
 
 
 @pytest.mark.parametrize("over,msg", [
-    ({"collateral_pct": 50}, "colateral"),
+    ({"collateral_pct": 50}, "collateral"),
     ({"ttl_blocks": 1}, "TTL"),
     ({"ttl_blocks": 21}, "TTL"),
-    ({"slots": []}, "vagas"),
-    ({"slots": [10 * WFLX] * 65}, "vagas"),
-    ({"slots": [9_999, 10 * WFLX]}, "voucher mínimo"),
-    ({"slots": [4000 * WFLX, 4000 * WFLX]}, "máximo permitido"),
-    ({"slots": [True, 10 * WFLX]}, "voucher mínimo"),
-    ({"refund_address": "wflx1invalido"}, "devolução"),
-    ({"key_type": "rsa"}, "tipo de chave"),
-    ({"device_key": "ab" * 10}, "chave de dispositivo"),
-    ({"extra": 1}, "carga útil"),
+    ({"slots": []}, "slots"),
+    ({"slots": [10 * WFLX] * 65}, "slots"),
+    ({"slots": [9_999, 10 * WFLX]}, "minimum voucher"),
+    ({"slots": [4000 * WFLX, 4000 * WFLX]}, "maximum allowed"),
+    ({"slots": [True, 10 * WFLX]}, "minimum voucher"),
+    ({"refund_address": "wflx1invalid"}, "refund"),
+    ({"key_type": "rsa"}, "key type"),
+    ({"device_key": "ab" * 10}, "device key"),
+    ({"extra": 1}, "payload"),
 ])
 def test_open_rejects_bad_parameters(keys, dev, over, msg):
     chain = vchain(keys)
@@ -127,25 +127,25 @@ def test_open_rejects_bad_parameters(keys, dev, over, msg):
 def test_open_rejects_pop_signed_by_other_key(keys, dev):
     chain = vchain(keys)
     other = P256KeyPair(private_value=5) if dev.key_type == "p256" else KeyPair(bytes([8]) * 32)
-    with pytest.raises(ValidationError, match="posse"):
+    with pytest.raises(ValidationError, match="possession"):
         chain.check_transaction(forge_open(chain, keys, dev, pop_signer=other))
 
 
 def test_open_rejects_underfunded_and_low_fee(keys, dev):
-    small = vchain(keys, alloc=((keys["alice"].address, 30 * WFLX),))      # < 40 WFLX de cofre
-    with pytest.raises(Exception, match="saldo insuficiente"):
+    small = vchain(keys, alloc=((keys["alice"].address, 30 * WFLX),))      # < 40 WFLX of vault
+    with pytest.raises(Exception, match="insufficient funds"):
         build_vault_open(keys["alice"], small.utxo.utxos_for(keys["alice"].address), dev, CAPS, 100, 5,
                          keys["alice"].address, small.params)
     chain = vchain(keys)
-    with pytest.raises(ValidationError, match="taxa"):
-        chain.check_transaction(forge_open(chain, keys, dev, fee=FEE - 1))   # abaixo da taxa fixa
-    big = {"slots": [10 * WFLX] * 64}                                         # tx grande: taxa por byte
+    with pytest.raises(ValidationError, match="fee"):
+        chain.check_transaction(forge_open(chain, keys, dev, fee=FEE - 1))   # below the fixed fee
+    big = {"slots": [10 * WFLX] * 64}                                         # large tx: fee per byte
     tx = forge_open(chain, keys, dev, big, fee=FEE)
     assert tx.size() > FEE
-    with pytest.raises(ValidationError, match="taxa"):
+    with pytest.raises(ValidationError, match="fee"):
         chain.check_transaction(tx)
     assert chain.check_transaction(forge_open(chain, keys, dev, big, fee=tx.size() + 1000)) >= tx.size()
-    with pytest.raises(ValidationError, match="não cobrem"):
+    with pytest.raises(ValidationError, match="do not cover"):
         chain.check_transaction(forge_open(chain, keys, dev, fee=-1))
 
 
@@ -154,7 +154,7 @@ def test_open_cannot_be_replayed(keys, dev):
     tx = build_vault_open(keys["alice"], chain.utxo.utxos_for(keys["alice"].address), dev, CAPS, 100, 5,
                           keys["alice"].address, chain.params)
     mine(chain, keys, [tx])
-    with pytest.raises(ValidationError, match="inexistente ou já gasta"):
+    with pytest.raises(ValidationError, match="nonexistent or already spent"):
         chain.check_transaction(tx)
 
 
@@ -184,9 +184,9 @@ def test_anyone_can_relay_a_claim_but_cannot_redirect_it(keys, dev):
     v = issue(chain, dev, vid, 0, 5 * WFLX, keys["bob"])
     tx = build_voucher_claim(v, chain.get_vault(vid), chain.params)
     stolen = replace(tx, outputs=(TxOutput(tx.outputs[0].value, keys["mallory"].address),))
-    with pytest.raises(ValidationError, match="não confere"):
+    with pytest.raises(ValidationError, match="does not match"):
         chain.check_transaction(stolen)
-    mine(chain, keys, [tx])  # o relay honesto (qualquer um) é aceito
+    mine(chain, keys, [tx])  # the honest relay (anyone) is accepted
     assert chain.balance(keys["bob"].address) > 0 and chain.balance(keys["mallory"].address) == 0
 
 
@@ -194,7 +194,7 @@ def test_same_voucher_cannot_be_claimed_twice(keys, dev):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev)
     tx = claim(chain, keys, issue(chain, dev, vid, 0, 5 * WFLX, keys["bob"]))
-    with pytest.raises(ValidationError, match="já liquidado"):
+    with pytest.raises(ValidationError, match="already settled"):
         chain.check_transaction(tx)
 
 
@@ -217,25 +217,25 @@ def test_tampered_signature_rejected(keys, dev):
     raw[-1] ^= 0x01
     tx = Transaction(chain.params.chain_id, (), (TxOutput(5 * WFLX - FEE, keys["bob"].address),),
                      kind="voucher_claim", payload={"voucher": bytes(raw).hex()})
-    with pytest.raises(ValidationError, match="assinatura"):
+    with pytest.raises(ValidationError, match="signature"):
         chain.check_transaction(tx)
 
 
 def test_voucher_for_other_network_or_unknown_vault_rejected(keys, dev):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev)
-    other = Voucher.issue(dev, "outra-rede", vid, 0, 5 * WFLX, keys["bob"].address, b"\x02" * 16)
-    with pytest.raises(ValidationError, match="outra rede"):
+    other = Voucher.issue(dev, "other-network", vid, 0, 5 * WFLX, keys["bob"].address, b"\x02" * 16)
+    with pytest.raises(ValidationError, match="another network"):
         build_voucher_claim(other, chain.get_vault(vid), chain.params)
     ghost = issue(chain, dev, "ab" * 32, 0, 5 * WFLX, keys["bob"])
     tx = Transaction(chain.params.chain_id, (), (TxOutput(5 * WFLX - FEE, keys["bob"].address),),
                      kind="voucher_claim", payload={"voucher": ghost.to_bytes().hex()})
-    with pytest.raises(ValidationError, match="inexistente"):
+    with pytest.raises(ValidationError, match="nonexistent"):
         chain.check_transaction(tx)
 
 
-@pytest.mark.parametrize("slot,amount,msg", [(2, 5 * WFLX, "vaga inexistente"),
-                                              (0, 10 * WFLX + 1, "limites"), (0, 9_999, "limites")])
+@pytest.mark.parametrize("slot,amount,msg", [(2, 5 * WFLX, "nonexistent slot"),
+                                              (0, 10 * WFLX + 1, "limits"), (0, 9_999, "limits")])
 def test_voucher_limits(keys, dev, slot, amount, msg):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev)
@@ -247,15 +247,15 @@ def test_claim_deadline_boundaries(keys, dev):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev)
     v = chain.get_vault(vid)
-    deadline = V.claim_deadline(v, chain.params)                    # = abertura + ttl + janela
+    deadline = V.claim_deadline(v, chain.params)                    # = opening + ttl + window
     assert deadline == v.opened_height + 5 + 4
-    advance(chain, keys, deadline - 1 - chain.height)               # próximo bloco = deadline
-    claim(chain, keys, issue(chain, dev, vid, 0, 5 * WFLX, keys["bob"]))  # incluído NO prazo: ok
+    advance(chain, keys, deadline - 1 - chain.height)               # next block = deadline
+    claim(chain, keys, issue(chain, dev, vid, 0, 5 * WFLX, keys["bob"]))  # included WITHIN the deadline: ok
     assert chain.height == deadline
     late = build_voucher_claim(issue(chain, dev, vid, 1, 5 * WFLX, keys["bob"], b"\x03" * 16),
                                chain.get_vault(vid), chain.params)
-    with pytest.raises(ValidationError, match="prazo"):
-        chain.check_transaction(late)                               # bloco deadline+1: tarde
+    with pytest.raises(ValidationError, match="deadline"):
+        chain.check_transaction(late)                               # block deadline+1: too late
 
 
 def test_claim_tx_shape_rules(keys, dev):
@@ -272,23 +272,23 @@ def test_claim_tx_shape_rules(keys, dev):
             chain.check_transaction(bad)
 
 
-# ------------------------------------------------------------ duplicidade (gasto duplo offline)
+# ------------------------------------------------------------ duplicates (offline double spend)
 def test_equivocation_second_receiver_paid_from_collateral(keys, dev):
     chain = vchain(keys)
     vid = open_vault(chain, keys, dev)
     v1 = issue(chain, dev, vid, 0, 10 * WFLX, keys["bob"], b"\x01" * 16)
-    v2 = issue(chain, dev, vid, 0, 10 * WFLX, keys["carol"], b"\x02" * 16)   # mesma vaga!
-    tx2 = build_voucher_claim(v2, chain.get_vault(vid), chain.params)       # carol, vaga ainda livre
-    claim(chain, keys, v1)                                                  # bob chega primeiro
-    assert chain.check_transaction(tx2) == chain.params.min_fee             # mesmo valor: ainda vale
+    v2 = issue(chain, dev, vid, 0, 10 * WFLX, keys["carol"], b"\x02" * 16)   # same slot!
+    tx2 = build_voucher_claim(v2, chain.get_vault(vid), chain.params)       # carol, slot still free
+    claim(chain, keys, v1)                                                  # bob arrives first
+    assert chain.check_transaction(tx2) == chain.params.min_fee             # same value: still valid
     mine(chain, keys, [tx2])
     assert chain.balance(keys["bob"].address) == 10 * WFLX - FEE
-    assert chain.balance(keys["carol"].address) == 10 * WFLX - FEE           # compensada pelo colateral
+    assert chain.balance(keys["carol"].address) == 10 * WFLX - FEE           # compensated by the collateral
     vault = chain.get_vault(vid)
     assert vault.fraud and vault.slots[0].collateral_left == 0
     v3 = issue(chain, dev, vid, 0, 10 * WFLX, keys["mallory"], b"\x03" * 16)
-    with pytest.raises(ValidationError, match="esgotado"):
-        build_voucher_claim(v3, vault, chain.params)                        # 3ª vítima: sem colateral
+    with pytest.raises(ValidationError, match="exhausted"):
+        build_voucher_claim(v3, vault, chain.params)                        # 3rd victim: no collateral
 
 
 def test_partial_collateral_is_shared_in_claim_order(keys, dev):
@@ -296,11 +296,11 @@ def test_partial_collateral_is_shared_in_claim_order(keys, dev):
     vid = open_vault(chain, keys, dev, caps=(10 * WFLX,))
     claim(chain, keys, issue(chain, dev, vid, 0, 6 * WFLX, keys["bob"], b"\x01" * 16))     # cap: 6
     stale = build_voucher_claim(issue(chain, dev, vid, 0, 5 * WFLX, keys["mallory"], b"\x03" * 16),
-                                chain.get_vault(vid), chain.params)         # montado vendo 10 de colateral
-    claim(chain, keys, issue(chain, dev, vid, 0, 8 * WFLX, keys["carol"], b"\x02" * 16))   # colateral: 8
-    with pytest.raises(ValidationError, match="não confere"):               # só restam 2: o claim antigo caiu
+                                chain.get_vault(vid), chain.params)         # built seeing 10 of collateral
+    claim(chain, keys, issue(chain, dev, vid, 0, 8 * WFLX, keys["carol"], b"\x02" * 16))   # collateral: 8
+    with pytest.raises(ValidationError, match="does not match"):               # only 2 remain: the old claim fell through
         chain.check_transaction(stale)
-    claim(chain, keys, issue(chain, dev, vid, 0, 5 * WFLX, keys["mallory"], b"\x03" * 16)) # refeito: paga 2
+    claim(chain, keys, issue(chain, dev, vid, 0, 5 * WFLX, keys["mallory"], b"\x03" * 16)) # redone: pays 2
     assert chain.balance(keys["carol"].address) == 8 * WFLX - FEE
     assert chain.balance(keys["mallory"].address) == 2 * WFLX - FEE
     assert chain.get_vault(vid).slots[0].collateral_left == 0
@@ -316,7 +316,7 @@ def test_free_slots_remain_claimable_after_fraud(keys, dev):
     assert chain.balance(keys["mallory"].address) == 4 * WFLX - FEE
 
 
-# ------------------------------------------------------------ devolução
+# ------------------------------------------------------------ refund
 def test_refund_only_after_window_and_returns_leftover(keys, dev):
     chain = vchain(keys)
     alice0 = chain.balance(keys["alice"].address)
@@ -324,15 +324,15 @@ def test_refund_only_after_window_and_returns_leftover(keys, dev):
     open_fee = alice0 - 40 * WFLX - chain.balance(keys["alice"].address)
     claim(chain, keys, issue(chain, dev, vid, 0, 6 * WFLX, keys["bob"]))
     early = build_vault_refund(chain.get_vault(vid), chain.params)
-    with pytest.raises(ValidationError, match="janela"):
+    with pytest.raises(ValidationError, match="window"):
         chain.check_transaction(early)
     advance(chain, keys, V.claim_deadline(chain.get_vault(vid), chain.params) - 1 - chain.height)
-    with pytest.raises(ValidationError, match="janela"):
-        chain.check_transaction(early)                               # próximo bloco = último de claims
+    with pytest.raises(ValidationError, match="window"):
+        chain.check_transaction(early)                               # next block = last claim block
     advance(chain, keys, 1)
-    assert chain.check_transaction(early) == chain.params.min_fee    # próximo bloco = deadline+1: ok
+    assert chain.check_transaction(early) == chain.params.min_fee    # next block = deadline+1: ok
     mine(chain, keys, [build_vault_refund(chain.get_vault(vid), chain.params)])
-    # alice: -taxa de abertura, -6 WFLX pagos, -taxa do refund (colateral volta inteiro: sem fraude)
+    # alice: -opening fee, -6 WFLX paid, -refund fee (collateral comes back in full: no fraud)
     assert chain.balance(keys["alice"].address) == alice0 - open_fee - 6 * WFLX - chain.params.min_fee
     assert chain.get_vault(vid).state == "CLOSED" and chain.vaults.total_locked == 0
     assert balances(chain, keys) == chain.total_supply()
@@ -349,10 +349,10 @@ def test_refund_burns_collateral_after_fraud(keys, dev):
     supply_before = chain.total_supply()
     rf = build_vault_refund(chain.get_vault(vid), chain.params)
     plan = V.plan_refund(chain.get_vault(vid), chain.params, None)
-    assert plan.burn == 4 * WFLX and plan.total == 4 * WFLX            # cap sobrou 4; colateral 4 queimado
+    assert plan.burn == 4 * WFLX and plan.total == 4 * WFLX            # cap left 4; collateral 4 burned
     mine(chain, keys, [rf])
     expected_burn = 4 * WFLX
-    assert chain.total_supply() == supply_before + 50 * WFLX - expected_burn   # recompensa - queima
+    assert chain.total_supply() == supply_before + 50 * WFLX - expected_burn   # reward - burn
     assert balances(chain, keys) == chain.total_supply()
 
 
@@ -363,7 +363,7 @@ def test_refund_twice_and_claim_after_refund_rejected(keys, dev):
     advance(chain, keys, 1)
     rf = build_vault_refund(chain.get_vault(vid), chain.params)
     mine(chain, keys, [rf])
-    with pytest.raises(ValidationError, match="encerrado"):
+    with pytest.raises(ValidationError, match="closed"):
         chain.check_transaction(rf)
     with pytest.raises(ValidationError):
         build_voucher_claim(issue(chain, dev, vid, 0, 5 * WFLX, keys["bob"]), chain.get_vault(vid), chain.params)
@@ -386,15 +386,15 @@ def test_refund_shape_rules(keys, dev):
 
 def test_no_early_close_exists():
     from winflux.blockchain.transaction import KINDS
-    assert "vault_close" not in KINDS  # Revisão 2: sem fechamento antecipado
+    assert "vault_close" not in KINDS  # Review 2: no early close
 
 
-# ------------------------------------------------------------ oferta, atomicidade, undo, determinismo
+# ------------------------------------------------------------ supply, atomicity, undo, determinism
 def test_vault_value_counts_toward_supply_cap(keys, dev):
     chain = vchain(keys, alloc=((keys["alice"].address, 1000 * WFLX),), max_supply=1100 * WFLX)
-    open_vault(chain, keys, dev, caps=(20 * WFLX,))                 # trava 40 WFLX
+    open_vault(chain, keys, dev, caps=(20 * WFLX,))                 # locks 40 WFLX
     advance(chain, keys, 5)
-    assert chain.total_supply() == 1100 * WFLX                       # recompensas pararam no teto
+    assert chain.total_supply() == 1100 * WFLX                       # rewards stopped at the cap
     assert balances(chain, keys) + chain.vaults.total_locked == chain.total_supply()
 
 
@@ -457,7 +457,7 @@ def test_vault_state_survives_restart(keys, dev, tmp_path):
     assert again.vaults.snapshot() == snap and again.total_supply() == supply
 
 
-# ------------------------------------------------------------ P-256, voucher, tipos de transação
+# ------------------------------------------------------------ P-256, voucher, transaction types
 def test_p256_high_s_rejected_and_hash_independent_of_signature(keys):
     chain = vchain(keys)
     dev = devs()["p256"]
@@ -465,14 +465,14 @@ def test_p256_high_s_rejected_and_hash_independent_of_signature(keys):
     v = issue(chain, dev, vid, 0, 5 * WFLX, keys["bob"])
     r, s = v.signature[:32], int.from_bytes(v.signature[32:], "big")
     assert s <= _P256_N // 2
-    malleated = replace(v, signature=r + (_P256_N - s).to_bytes(32, "big"))   # (r, n-s) também é ECDSA válida
-    assert malleated.hash == v.hash and malleated.signature != v.signature   # identidade = só o corpo
-    with pytest.raises(ValidationError, match="assinatura"):
-        build_voucher_claim(malleated, chain.get_vault(vid), chain.params)   # S alto: recusado
+    malleated = replace(v, signature=r + (_P256_N - s).to_bytes(32, "big"))   # (r, n-s) is also valid ECDSA
+    assert malleated.hash == v.hash and malleated.signature != v.signature   # identity = body only
+    with pytest.raises(ValidationError, match="signature"):
+        build_voucher_claim(malleated, chain.get_vault(vid), chain.params)   # high S: rejected
     claim(chain, keys, v)
-    with pytest.raises(ValidationError, match="assinatura"):                 # a variante nunca vira "outro voucher"
+    with pytest.raises(ValidationError, match="signature"):                 # the variant never becomes "another voucher"
         build_voucher_claim(malleated, chain.get_vault(vid), chain.params)
-    assert chain.get_vault(vid).fraud is False                               # colateral intocado
+    assert chain.get_vault(vid).fraud is False                               # collateral untouched
 
 
 def test_voucher_codec_roundtrip_and_strictness(keys):
@@ -485,18 +485,18 @@ def test_voucher_codec_roundtrip_and_strictness(keys):
         with pytest.raises(ValidationError):
             Voucher.from_bytes(bad)
     with pytest.raises(ValidationError):
-        Voucher.issue(dev, "net", "ab" * 32, 70_000, 1, keys["bob"].address, b"\x09" * 16)   # vaga > u16
+        Voucher.issue(dev, "net", "ab" * 32, 70_000, 1, keys["bob"].address, b"\x09" * 16)   # slot > u16
     with pytest.raises(ValidationError):
-        Voucher.issue(dev, "net", "ab" * 32, 1, 2**64, keys["bob"].address, b"\x09" * 16)    # valor > u64
+        Voucher.issue(dev, "net", "ab" * 32, 1, 2**64, keys["bob"].address, b"\x09" * 16)    # value > u64
 
 
 def test_transaction_kind_rules_at_parse(keys):
     base = Transaction("c", (), (), kind="voucher_claim", payload={"voucher": "00"}).to_dict()
     assert Transaction.from_dict(base).kind == "voucher_claim"
-    for mutate in (lambda d: d.update(kind="vault_close"),            # removido
-                   lambda d: d.update(kind="nada"),
-                   lambda d: d.update(payload=None),                  # cofre exige payload
-                   lambda d: d.update(coinbase_height=3),             # cofre não é coinbase
+    for mutate in (lambda d: d.update(kind="vault_close"),            # removed
+                   lambda d: d.update(kind="nothing"),
+                   lambda d: d.update(payload=None),                  # vault requires a payload
+                   lambda d: d.update(coinbase_height=3),             # vault is not a coinbase
                    lambda d: d.update(kind="transfer", payload={"a": 1})):
         d = json.loads(json.dumps(base))
         mutate(d)

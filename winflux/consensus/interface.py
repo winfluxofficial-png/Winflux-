@@ -1,4 +1,4 @@
-"""Interface de consenso: permite trocar PoA (testes) por PoW (rede pública)."""
+"""Consensus interface: allows swapping PoA (tests) for PoW (public network)."""
 from abc import ABC, abstractmethod
 
 from ..blockchain.block import Block
@@ -11,20 +11,20 @@ class Consensus(ABC):
 
     @abstractmethod
     def verify_block(self, block: Block, prev: Block, params: ChainParams, view=None) -> None:
-        """Levanta ValidationError se o bloco não satisfaz o consenso.
+        """Raises ValidationError if the block does not satisfy consensus.
 
-        `view` dá acesso ao contexto da cadeia (ancestrais e alvo de cada bloco) para regras
-        que dependem do histórico, como o ajuste de dificuldade.
+        `view` gives access to the chain context (ancestors and target of each block) for rules
+        that depend on history, such as difficulty adjustment.
         """
 
     @abstractmethod
     def seal(self, block: Block, keypair: KeyPair) -> Block:
-        """Produz a prova (assinatura/nonce) e a grava no bloco."""
+        """Produces the proof (signature/nonce) and writes it into the block."""
 
     def next_target(self, prev: Block, params: ChainParams, view) -> int:
-        """Alvo exigido do filho de `prev` (0 quando o consenso não usa alvo)."""
+        """Target required of `prev`'s child (0 when consensus does not use a target)."""
         return 0
 
     def block_work(self, target: int) -> int:
-        """Trabalho acumulado por um bloco com esse alvo (PoA: 1 por bloco)."""
+        """Work accumulated by a block with this target (PoA: 1 per block)."""
         return 1

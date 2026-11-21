@@ -1,14 +1,14 @@
-"""Compromisso Merkle com o registro de cofres (raiz de estado) e provas de inclusão.
+"""Merkle commitment to the vault registry (state root) and inclusion proofs.
 
-Consensus-crítico: todo bloco carrega `state_root` e todo nó o recomputa. Estrutura em dois níveis:
+Consensus-critical: every block carries `state_root` and every node recomputes it. Two-level structure:
 
-    raiz_do_estado = H("WFLX-VAULT-ROOT-V1" ‖ nº_de_cofres ‖ topo(folhas dos cofres, ordenadas por vault_id))
-    folha_do_cofre = H(0x00 ‖ hash_da_chain ‖ vault_id ‖ hash_estático ‖ estado ‖ fraude ‖ raiz_das_vagas)
-    raiz_das_vagas = H("WFLX-SLOTS-V1" ‖ nº_de_vagas ‖ topo(folhas das vagas))
+    state_root = H("WFLX-VAULT-ROOT-V1" ‖ n_vaults ‖ top(vault leaves, sorted by vault_id))
+    vault_leaf = H(0x00 ‖ chain_hash ‖ vault_id ‖ static_hash ‖ state ‖ fraud ‖ slots_root)
+    slots_root = H("WFLX-SLOTS-V1" ‖ n_slots ‖ top(slot leaves))
 
-Defesas: prefixos 0x00 (folha) e 0x01 (nó interno) contra confusão folha/nó; a contagem entra no
-compromisso (tamanho da árvore não é maleável); a folha do cofre inclui o hash da rede (uma prova de uma
-rede não vale em outra). Árvores completadas até potência de 2 com uma folha de preenchimento fixa.
+Defenses: prefixes 0x00 (leaf) and 0x01 (internal node) against leaf/node confusion; the count enters the
+commitment (tree size is not malleable); the vault leaf includes the network hash (a proof from one
+network is not valid on another). Trees padded up to a power of 2 with a fixed filler leaf.
 """
 import struct
 
@@ -48,7 +48,7 @@ def merkle_top(leaf_hashes: list) -> bytes:
 def merkle_path(leaf_hashes: list, index: int) -> list:
     n = len(leaf_hashes)
     if not 0 <= index < n:
-        raise IndexError("índice fora da árvore")
+        raise IndexError("index outside the tree")
     level = list(leaf_hashes) + [_PAD] * ((1 << depth_for(n)) - n)
     path, i = [], index
     while len(level) > 1:
@@ -59,7 +59,7 @@ def merkle_path(leaf_hashes: list, index: int) -> list:
 
 
 def top_from_path(leaf_hash: bytes, index: int, count: int, path: list) -> bytes | None:
-    """Recalcula o topo a partir de uma folha e do caminho; None se o formato é inconsistente."""
+    """Recomputes the top from a leaf and the path; None if the format is inconsistent."""
     if not 0 <= index < count or len(path) != depth_for(count) or len(path) > MAX_PATH:
         return None
     cur = leaf_hash
@@ -72,7 +72,7 @@ def bind(tag: bytes, count: int, top: bytes) -> bytes:
     return sha256(tag + struct.pack(">Q", count) + top)
 
 
-# ------------------------------------------------------------------ registros
+# ------------------------------------------------------------------ records
 def bind_slots(count: int, top: bytes) -> bytes:
     return bind(_SLOTS_TAG, count, top)
 

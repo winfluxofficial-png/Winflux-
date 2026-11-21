@@ -1,134 +1,134 @@
-# Pagamentos offline encadeados na Winflux — arquitetura aprovada
+# Chained offline payments in Winflux — approved architecture
 
-Estado: decisões **aprovadas**; **A1, as regras de exposição do colateral e a A2 (notas, verificador offline, simulador de hardware)
-implementadas e testadas**; o restante (A3, A4, B, C) é plano. Complementa `offline-payments.md` (cofres e vouchers) e substitui sua decisão "sem
-transitividade": dinheiro recebido offline passa a poder ser repassado offline, sob os limites abaixo.
-Hipóteses de segurança: `security-assumptions.md`.
+Status: decisions **approved**; **A1, the collateral exposure rules and A2 (notes, offline verifier, hardware simulator)
+implemented and tested**; the rest (A3, A4, B, C) is plan. Complements `offline-payments.md` (vaults and vouchers) and replaces its "no
+transitivity" decision: money received offline can now be passed on offline, under the limits below.
+Security assumptions: `security-assumptions.md`.
 
-## 1. Decisões aprovadas
-1. **Notas transferíveis** (Alice → Bob → Carlos offline), com cadeia de proveniência verificável.
-2. **Profundidade máxima de repasse offline: 1 sem hardware seguro; 3 com hardware seguro** atestado e de uso único.
-   O nível efetivo de uma nota é o do **pior salto**.
-3. **O colateral da vaga raiz responde por fraudes de qualquer salto**, **com limites determinísticos de exposição**
-   (§3): múltiplas fraudes ou reivindicações sobre a mesma cadeia nunca geram indenização acima do valor garantido.
-4. Nenhuma promessa de prevenção absoluta de gasto duplo offline: sem rede não há consistência garantida (teorema CAP).
-   Garantimos **prevenção sob hipóteses de hardware**, **perda limitada** e **compensação determinística** quando elas falham.
+## 1. Approved decisions
+1. **Transferable notes** (Alice → Bob → Carlos offline), with a verifiable provenance chain.
+2. **Maximum offline pass-on depth: 1 without secure hardware; 3 with secure hardware** that is attested and single-use.
+   A note's effective level is that of its **worst hop**.
+3. **The root slot's collateral answers for fraud at any hop**, **with deterministic exposure limits**
+   (§3): multiple frauds or claims on the same chain never produce a compensation above the guaranteed value.
+4. No promise of absolute prevention of offline double spend: without a network there is no guaranteed consistency (CAP theorem).
+   We guarantee **prevention under hardware assumptions**, **bounded loss** and **deterministic compensation** when those fail.
 
-## 2. Modelo
-- **Cofre/vaga raiz** (já implementado): valor + colateral travados na cadeia; a vaga é a nota raiz, de valor `cap`.
-- **Nota**: valor ligado a uma chave de uso único. Gastá-la assina uma **transação offline** com saídas
-  (valor, nova chave dona ou endereço final). Conservação: Σ saídas ≤ valor da nota; sem taxa offline.
-- **Proveniência**: cada pagamento leva a cadeia `[vaga raiz → t1 → t2 …]` + prova do cofre + atestações.
-- **Quem recebe verifica localmente**: prova do cofre (checkpoint, A1), assinaturas de cada salto, conservação,
-  profundidade e teto do nível, atestação, margem de prazo, vaga/nota nunca vistas antes, lista de bloqueio.
-- **Estados**: `RECEBIDA_OFFLINE` → `LIQUIDANDO` → `CONFIRMADA(n)` → `FINAL`; falhas `CONFLITO_REJEITADO`, `COMPENSADA`,
-  `PERDA`, `EXPIRADA`. Nunca se mostra uma nota offline como confirmada.
+## 2. Model
+- **Vault/root slot** (already implemented): value + collateral locked on the chain; the slot is the root note, of value `cap`.
+- **Note**: value bound to a single-use key. Spending it signs an **offline transaction** with outputs
+  (value, new owner key or final address). Conservation: Σ outputs ≤ note value; no offline fee.
+- **Provenance**: each payment carries the chain `[root slot → t1 → t2 …]` + the vault proof + attestations.
+- **The receiver verifies locally**: vault proof (checkpoint, A1), signatures of each hop, conservation,
+  depth and level cap, attestation, deadline margin, slot/note never seen before, block list.
+- **States**: `RECEIVED_OFFLINE` → `SETTLING` → `CONFIRMED(n)` → `FINAL`; failures `CONFLICT_REJECTED`, `COMPENSATED`,
+  `LOSS`, `EXPIRED`. An offline note is never shown as confirmed.
 
-### Níveis e limites (testnet, a calibrar)
-| Nível provado em todos os saltos | Profundidade | Teto por nota |
+### Levels and limits (testnet, to be calibrated)
+| Level proven at every hop | Depth | Cap per note |
 |---|---|---|
-| Software (chave clonável) | 1 | pequeno |
-| Hardware atestado, uso único | 3 | médio |
-| Elemento seguro com saldo (futuro) | 5 | alto |
+| Software (cloneable key) | 1 | small |
+| Attested hardware, single use | 3 | medium |
+| Secure element with balance (future) | 5 | high |
 
-## 3. Exposição do colateral (implementado em `blockchain/exposure.py`)
-Para uma vaga com teto `C` e colateral inicial `K = ceil(C·ρ)`, uma nota **contestada** `x` (duas transações distintas
-gastam a mesma nota) tem valor `v(x)`. Quando um claim perde a corrida, a indenização é **função pura do estado
-on-chain**:
+## 3. Collateral exposure (implemented in `blockchain/exposure.py`)
+For a slot with cap `C` and initial collateral `K = ceil(C·ρ)`, a **contested** note `x` (two distinct transactions
+spend the same note) has value `v(x)`. When a claim loses the race, the compensation is a **pure function of the on-chain
+state**:
 
-| Regra | Enunciado |
+| Rule | Statement |
 |---|---|
-| R1 | Σ indenizações da vaga ≤ colateral restante (≤ K) |
-| R2 | Σ indenizações por nota contestada ≤ `v(x)` (o valor efetivamente em jogo) |
-| R3 | O mesmo claim é indenizado no máximo uma vez (reapresentação recusada) |
-| R4 | Cada indenização ≤ valor da folha reivindicada |
-| R5 | Ordem de pagamento = ordem de aplicação na cadeia (bloco, posição); esgotado o teto, o resto recebe 0 |
-| R8 | Indenização abaixo do mínimo (`max(min_voucher, min_fee+1)`) é recusada (poeira) |
-| R9 | No máximo `max_compensations_per_slot` (padrão 16) indenizações por vaga (limita estado e custo) |
+| R1 | Σ of the slot's compensations ≤ remaining collateral (≤ K) |
+| R2 | Σ of compensations per contested note ≤ `v(x)` (the value actually at stake) |
+| R3 | The same claim is compensated at most once (resubmission refused) |
+| R4 | Each compensation ≤ value of the claimed leaf |
+| R5 | Payment order = order of application on the chain (block, position); once the cap is exhausted, the rest get 0 |
+| R8 | A compensation below the minimum (`max(min_voucher, min_fee+1)`) is refused (dust) |
+| R9 | At most `max_compensations_per_slot` (default 16) compensations per slot (bounds state and cost) |
 
-**Garantias (invariantes testados):** saída total de uma vaga ≤ `C + min(K, C)`; saída total do cofre ≤ valor travado
-na abertura; cada claim é pago uma vez; `locked ≥ 0`; oferta conservada (UTXO + travado = oferta). O colateral que
-sobra depois de fraude é **queimado** no refund (ver `offline-payments.md`, R6).
+**Guarantees (tested invariants):** total outflow of a slot ≤ `C + min(K, C)`; total outflow of the vault ≤ value locked
+at opening; each claim is paid once; `locked ≥ 0`; supply conserved (UTXO + locked = supply). The collateral that
+is left after fraud is **burned** in the refund (see `offline-payments.md`, R6).
 
-**Exposição máxima de Alice por vaga: `min(K, C)`**, mesmo que um intermediário malicioso (com cúmplices) gere
-muitos ramos conflitantes. Alice controla esse risco escolhendo `C`, `ρ` e a política de repasse. Com ρ > 100 %, o
-excedente não amplia indenizações (R2), só a dissuasão pela queima.
+**Alice's maximum exposure per slot: `min(K, C)`**, even if a malicious intermediary (with accomplices) generates
+many conflicting branches. Alice controls this risk by choosing `C`, `ρ` and the pass-on policy. With ρ > 100 %, the
+surplus does not enlarge compensations (R2), it only adds deterrence through the burn.
 
-Exemplo (`C = 10`, `ρ = 300 %`, `K = 30`): voucher A de 10 ocupa a vaga; B de 7 é indenizado (7); C de 7 recebe só 3
-(R2: sobram 3 do valor 10); D de 5 é recusado (R2); o colateral restante, 20, é queimado no refund.
+Example (`C = 10`, `ρ = 300 %`, `K = 30`): voucher A of 10 occupies the slot; B of 7 is compensated (7); C of 7 receives only 3
+(R2: 3 of the value 10 remain); D of 5 is refused (R2); the remaining collateral, 20, is burned in the refund.
 
-**Estado atual × planejado:** as regras R1-R4, R8, R9 já valem para o voucher (nota raiz com uma saída final;
-nota contestada = a raiz, `v = C`). Para notas encadeadas (A3) a **mesma função** será usada com um mapa
-`nota contestada → total indenizado` no registro.
+**Current × planned state:** rules R1-R4, R8, R9 already apply to the voucher (root note with one final output;
+contested note = the root, `v = C`). For chained notes (A3) the **same function** will be used with a map
+`contested note → total compensated` in the registry.
 
-### Bug encontrado e corrigido nesta etapa
-A regra anterior permitia **reapresentar um voucher já indenizado**: com o mesmo valor, a transação idêntica derrubava
-a produção de blocos (`ValueError` fora de `ValidationError`); com valor diferente (colateral parcial), pagava de novo
-(Carol recebeu 9,99998 por um voucher de 8). Corrigido por R3 + guarda de outpoint duplicado; testes de regressão e
-mutação cobrem os dois casos.
+### Bug found and fixed in this stage
+The previous rule allowed **resubmitting an already-compensated voucher**: with the same value, the identical transaction brought down
+block production (`ValueError` outside `ValidationError`); with a different value (partial collateral), it paid again
+(Carol received 9.99998 for a voucher of 8). Fixed by R3 + a duplicate-outpoint guard; regression and
+mutation tests cover both cases.
 
-## 4. Fluxos
-**Alice → Bob → Carlos** (vaga de 30, colateral 30):
+## 4. Flows
+**Alice → Bob → Carlos** (slot of 30, collateral 30):
 ```
-online  : Alice abre cofre (vaga 30 + colateral 30); registra raiz de chaves
-offline : Bob  -> Alice : pedido {chave nova de Bob, request_id}
-          Alice -> Bob  : t1 {nota raiz -> 30 p/ chave de Bob} + prova do cofre + atestação   [Bob verifica]
-          Carlos -> Bob : pedido {chave nova de Carlos}
-          Bob -> Carlos : [t1, t2 {30 -> 10 p/ Carlos, 20 p/ troco de Bob}] + prova + atestações [Carlos verifica]
-online  : qualquer um liquida (note_claim): a cadeia aplica cada transação offline UMA vez, por id
-          (idempotente: a ordem de sincronização não importa)
-fraude  : Bob assina t2' (30 -> Eve) com a mesma nota: quem aplicar primeiro vence; o outro é indenizado
-          sob R1-R9 e o cofre é marcado como fraudulento
+online  : Alice opens a vault (slot 30 + collateral 30); registers the key root
+offline : Bob  -> Alice : request {Bob's new key, request_id}
+          Alice -> Bob  : t1 {root note -> 30 to Bob's key} + vault proof + attestation   [Bob verifies]
+          Carlos -> Bob : request {Carlos's new key}
+          Bob -> Carlos : [t1, t2 {30 -> 10 to Carlos, 20 to Bob's change}] + proof + attestations [Carlos verifies]
+online  : anyone settles (note_claim): the chain applies each offline transaction ONCE, by id
+          (idempotent: the sync order does not matter)
+fraud   : Bob signs t2' (30 -> Eve) with the same note: whoever applies first wins; the other is compensated
+          under R1-R9 and the vault is marked as fraudulent
 ```
 
-## 5. Mudanças de protocolo
-| Item | Estado |
+## 5. Protocol changes
+| Item | Status |
 |---|---|
-| `state_root` (Merkle do registro de cofres) no cabeçalho do bloco | **Feito (A1)** |
-| Checkpoints (cabeçalho assinado) e provas de cofre (~1,2-1,9 KB JSON, 0,2 ms para verificar) | **Feito (A1)** |
-| Limites de exposição R1-R9 | **Feito** (voucher); notas em A3 |
-| Chave própria por vaga (`slot_keys`), formato binário da transação offline, verificador offline | **Feito (A2)** |
-| `note_claim` + registro de notas/transações aplicadas, com undo | A3 |
-| Profundidade máxima de consenso, taxa por byte nos claims de cadeia | A3 |
-| LM-OTS híbrido, lista de dispositivos fraudulentos nos checkpoints | C |
+| `state_root` (Merkle of the vault registry) in the block header | **Done (A1)** |
+| Checkpoints (signed header) and vault proofs (~1.2-1.9 KB JSON, 0.2 ms to verify) | **Done (A1)** |
+| Exposure limits R1-R9 | **Done** (voucher); notes in A3 |
+| Own key per slot (`slot_keys`), binary format of the offline transaction, offline verifier | **Done (A2)** |
+| `note_claim` + registry of applied notes/transactions, with undo | A3 |
+| Maximum consensus depth, fee per byte on chain claims | A3 |
+| Hybrid LM-OTS, list of fraudulent devices in the checkpoints | C |
 
-## 6. Plano
-| Fase | Entrega | Hardware |
+## 6. Plan
+| Phase | Deliverable | Hardware |
 |---|---|---|
-| A1 | Checkpoints e provas de cofre | não — **concluída** |
-| A2 | Formato de nota, verificador offline do destinatário, simulador de hardware (uso único + atestação de teste) | não — **concluída** |
-| A3 | `note_claim`, registro, conflitos e testes adversariais (conflitantes, clonagem, backup, adulteração, reuso, ordem) | não |
-| A4 | Reconciliação da carteira (prazos, conflitos, repetição) | não |
-| B1 | App de diagnóstico no Android (StrongBox, atestação, uso único, apagamento da chave, backup) | **celular** |
-| B2 | Transportes QR (PWA), NFC e BLE (nativo) | celular |
-| C | API/P2P para liquidação, integração PWA/Android, LM-OTS híbrido | celular |
+| A1 | Checkpoints and vault proofs | no — **completed** |
+| A2 | Note format, recipient's offline verifier, hardware simulator (single use + test attestation) | no — **completed** |
+| A3 | `note_claim`, registry, conflicts and adversarial tests (conflicting, cloning, backup, tampering, reuse, ordering) | no |
+| A4 | Wallet reconciliation (deadlines, conflicts, repetition) | no |
+| B1 | Diagnostic app on Android (StrongBox, attestation, single use, key erasure, backup) | **phone** |
+| B2 | QR transports (PWA), NFC and BLE (native) | phone |
+| C | API/P2P for settlement, PWA/Android integration, hybrid LM-OTS | phone |
 
 
-## 7. A2 — o que foi implementado
-**Consenso (aditivo):** `vault_open` aceita `slot_keys` (uma chave pública por vaga). A chave entra no registro, no `state_root` e na
-prova de cofre. Uma vaga com chave própria **não pode** ser liquidada por `voucher_claim` (só por `note_claim`, A3): assim a chave
-de uso único é a única autoridade sobre a vaga. Enquanto o `note_claim` não existe, um cofre com `slot_keys` só pode ser devolvido
-(`vault_refund`) depois do prazo.
+## 7. A2 — what was implemented
+**Consensus (additive):** `vault_open` accepts `slot_keys` (one public key per slot). The key goes in the record, in the `state_root` and in the
+vault proof. A slot with its own key **cannot** be settled by `voucher_claim` (only by `note_claim`, A3): this way the single-use key
+is the only authority over the slot. While `note_claim` does not exist, a vault with `slot_keys` can only be refunded
+(`vault_refund`) after the deadline.
 
-**Formato (`offline/note.py`):** nota raiz = vaga (`H(vault_id, vaga)`); transação offline binária (106 + 41·n + 16 bytes, n ≤ 4
-saídas): `versão, hash da rede, vault_id, nota gasta, valor, saídas[valor, tipo NOTA|ENDEREÇO, dono], request_id`. Dono de uma
-NOTA = compromisso de hash `H(tipo, chave)`: a chave só é revelada ao gastar. Conservação exata (Σ saídas = valor da nota).
-`txid` não cobre assinatura/chave (maleabilidade inofensiva).
+**Format (`offline/note.py`):** root note = slot (`H(vault_id, slot)`); binary offline transaction (106 + 41·n + 16 bytes, n ≤ 4
+outputs): `version, network hash, vault_id, spent note, value, outputs[value, type NOTE|ADDRESS, owner], request_id`. Owner of a
+NOTE = hash commitment `H(type, key)`: the key is only revealed when spending. Exact conservation (Σ outputs = note value).
+The `txid` does not cover the signature/key (harmless malleability).
 
-**Verificador (`offline/verifier.py`)** — o que prova, em ordem: (1) prova do cofre contra checkpoint assinado, com memória
-monotônica do receptor; vaga livre, cofre aberto e sem fraude, com chave própria e prazo suficiente; (2) cada salto: rede e cofre
-certos, nota gasta e valor esperados, conservação, a chave que assinou é a dona (1º salto: a chave da vaga; seguintes:
-compromisso da saída), assinatura válida (P-256 com S baixo), encadeamento contíguo; (3) a folha é do destinatário (chave ou
-endereço) e o `request_id` confere; (4) **nível efetivo = pior salto** e política: profundidade 1 (software) / 3 (hardware),
-tetos por nível; (5) memória local de notas já vistas (gasto duplo visto por este receptor).
-Resultado: `RECEBIDA_OFFLINE` (pendente). `accept()` grava na memória local antes de confirmar ao pagador.
+**Verifier (`offline/verifier.py`)** — what it proves, in order: (1) vault proof against a signed checkpoint, with monotonic
+memory on the receiver's side; free slot, open vault with no fraud, with its own key and enough deadline; (2) each hop: right network and vault,
+expected spent note and value, conservation, the key that signed is the owner (1st hop: the slot's key; following: the
+output's commitment), valid signature (P-256 with low S), contiguous chaining; (3) the leaf belongs to the recipient (key or
+address) and the `request_id` matches; (4) **effective level = worst hop** and policy: depth 1 (software) / 3 (hardware),
+caps per level; (5) local memory of notes already seen (double spend seen by this receiver).
+Result: `RECEIVED_OFFLINE` (pending). `accept()` writes to local memory before confirming to the payer.
 
-**Nível de hardware de um salto:** só com atestação válida **dessa chave**, uso único e TEE/StrongBox; para saltos ≥ 2 o desafio da
-atestação deve ser o `request_id` da transação que criou a nota. Qualquer problema (vencida, revogada, outra raiz, outra chave,
-desafio errado, sem atestação, software, sem uso único) **rebaixa a software**, que tem os limites mais restritivos.
+**A hop's hardware level:** only with a valid attestation **of that key**, single use and TEE/StrongBox; for hops ≥ 2 the attestation
+challenge must be the `request_id` of the transaction that created the note. Any problem (expired, revoked, another root, another key,
+wrong challenge, no attestation, software, no single use) **downgrades to software**, which has the most restrictive limits.
 
-**Simulador (`offline/hardware_sim.py`) e atestação (`offline/attestation.py`):** formato JSON simulado com a semântica da atestação
-de chave do Android; o verificador real entra atrás da mesma interface na Fase B. O simulador modela: chave não exportável, não
-clonável, apagada após uso único (restaurar backup não a ressuscita) e o adversário `break_single_use()`.
+**Simulator (`offline/hardware_sim.py`) and attestation (`offline/attestation.py`):** simulated JSON format with the semantics of Android
+key attestation; the real verifier goes in behind the same interface in Phase B. The simulator models: a non-exportable key, non-
+clonable, erased after single use (restoring a backup does not resurrect it) and the `break_single_use()` adversary.
 
 **Demo:** `scripts/demo_chained_notes.py`.

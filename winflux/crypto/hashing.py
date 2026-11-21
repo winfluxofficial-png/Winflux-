@@ -1,4 +1,4 @@
-"""SHA-256, serialização canônica e raiz de Merkle."""
+"""SHA-256, canonical serialization and Merkle root."""
 import hashlib
 import json
 
@@ -12,16 +12,16 @@ def sha256_hex(data: bytes) -> str:
 
 
 def canonical_json(obj) -> bytes:
-    """JSON determinístico: chaves ordenadas, sem espaços, ASCII."""
+    """Deterministic JSON: sorted keys, no spaces, ASCII."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=True, allow_nan=False).encode("ascii")
 
 
 def merkle_root(hashes: list[str]) -> str:
-    """Raiz de Merkle de uma lista de hashes hex.
+    """Merkle root of a list of hex hashes.
 
-    Com número ímpar o último é duplicado; por isso o validador de blocos
-    rejeita txids repetidos (evita a ambiguidade CVE-2012-2459).
+    With an odd count the last one is duplicated; that is why the block validator
+    rejects repeated txids (avoids the CVE-2012-2459 ambiguity).
     """
     if not hashes:
         return sha256_hex(b"")

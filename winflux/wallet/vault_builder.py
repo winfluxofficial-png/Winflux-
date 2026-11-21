@@ -1,4 +1,4 @@
-"""Montagem de transações de cofre offline: abertura, claim e devolução."""
+"""Building offline vault transactions: opening, claim and refund."""
 from dataclasses import replace
 
 from ..blockchain import vaults as V
@@ -21,9 +21,9 @@ def _open_once(owner: KeyPair, utxos, device_key, caps, pct, ttl, refund_address
         if total >= need:
             break
     if total < need:
-        raise InsufficientFunds(f"saldo insuficiente: tem {total}, precisa {need}")
+        raise InsufficientFunds(f"insufficient funds: have {total}, need {need}")
     if len(chosen) > max_inputs:
-        raise WalletError("muitas entradas: consolide as moedas antes")
+        raise WalletError("too many inputs: consolidate the coins first")
     outputs = (TxOutput(total - need, change_address),) if total - need > 0 else ()
     inputs = tuple(TxInput(op[0], op[1], owner.public_hex) for op, _ in chosen)
     payload = {"device_key": device_key.public_hex, "key_type": device_key.key_type,
@@ -32,9 +32,9 @@ def _open_once(owner: KeyPair, utxos, device_key, caps, pct, ttl, refund_address
     if slot_keys:
         payload["slot_keys"] = list(slot_keys)
     draft = Transaction(chain_id, inputs, outputs, kind="vault_open", payload=payload)
-    pop = device_key.sign(V.pop_message(draft)).hex()           # prova de posse de D
+    pop = device_key.sign(V.pop_message(draft)).hex()           # proof of possession of D
     tx = replace(draft, payload={**payload, "pop": pop})
-    sig = owner.sign(tx.signing_message()).hex()                 # o txid já cobre o `pop`
+    sig = owner.sign(tx.signing_message()).hex()                 # the txid already covers the `pop`
     return replace(tx, inputs=tuple(replace(i, signature=sig) for i in tx.inputs))
 
 
@@ -42,10 +42,10 @@ def build_vault_open(owner: KeyPair, utxos, device_key, caps, collateral_pct: in
                      refund_address: str, params, fee: int | None = None,
                      change_address: str | None = None, max_inputs: int = 256,
                      slot_keys=()) -> Transaction:
-    """`device_key`: KeyPair (ed25519) ou P256KeyPair. `utxos`: [(outpoint, TxOutput)] do dono.
-    `slot_keys`: chaves públicas (hex) de uso único, uma por vaga, para vagas de NOTA (A2)."""
+    """`device_key`: KeyPair (ed25519) or P256KeyPair. `utxos`: [(outpoint, TxOutput)] of the owner.
+    `slot_keys`: single-use public keys (hex), one per slot, for NOTE slots (A2)."""
     if not is_valid_address(refund_address):
-        raise WalletError("endereço de devolução inválido")
+        raise WalletError("invalid refund address")
     change = change_address or owner.address
     if fee is not None:
         return _open_once(owner, utxos, device_key, caps, collateral_pct, ttl_blocks, refund_address,
@@ -58,21 +58,21 @@ def build_vault_open(owner: KeyPair, utxos, device_key, caps, collateral_pct: in
         if trial >= need:
             return tx
         trial = need
-    raise WalletError("não foi possível estimar a taxa")
+    raise WalletError("could not estimate the fee")
 
 
 def build_voucher_claim(voucher: Voucher, vault: V.Vault, params) -> Transaction:
-    """Claim de um voucher recebido offline. Se o estado do cofre mudar antes da inclusão
-    (ex.: outra pessoa ocupou a vaga), a tx fica inválida e deve ser refeita com o estado novo."""
-    plan = V.plan_claim(vault, voucher, params, None)   # prazo é checado na inclusão
+    """Claim of a voucher received offline. If the vault state changes before inclusion
+    (e.g. someone else occupied the slot), the tx becomes invalid and must be rebuilt with the new state."""
+    plan = V.plan_claim(vault, voucher, params, None)   # the deadline is checked at inclusion
     out = TxOutput(plan.payout - params.min_fee, voucher.receiver_address)
     return Transaction(params.chain_id, (), (out,), kind="voucher_claim",
                        payload={"voucher": voucher.to_bytes().hex()})
 
 
 def build_note_claim(payment, vault: V.Vault, params) -> Transaction:
-    """Liquida a folha de um `OfflinePayment` (recebido offline). A folha precisa ser do tipo endereço.
-    Se o estado do cofre mudar antes da inclusão, a tx fica inválida e deve ser refeita."""
+    """Settles the leaf of an `OfflinePayment` (received offline). The leaf must be of the address type.
+    If the vault state changes before inclusion, the tx becomes invalid and must be rebuilt."""
     payload = {"vault_id": vault.vault_id, "slot": payment.slot, "leaf": payment.leaf,
                "hops": [{"tx": h.tx.to_bytes().hex(), "key_type": h.key_type, "pubkey": h.pubkey.hex(),
                          "sig": h.signature.hex()} for h in payment.hops]}

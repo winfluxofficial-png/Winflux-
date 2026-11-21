@@ -1,4 +1,4 @@
-"""A2: notas transferíveis, cadeia de proveniência e verificador offline — testes adversariais."""
+"""A2: transferable notes, provenance chain and offline verifier — adversarial tests."""
 import copy
 import json
 import random
@@ -40,7 +40,7 @@ def soft(n, key_type="p256"):
 
 
 class World:
-    """Cofre com vagas de NOTA: a chave de cada vaga é de hardware (uso único) ou de software."""
+    """Vault with NOTE slots: each slot's key is a hardware key (single use) or a software key."""
 
     def __init__(self, keys, *, cap=30 * WFLX, n_slots=2, key_type="p256", software_slots=False,
                  alice_level="strongbox", alice_not_after=T0 + 10**7, ttl=8, with_slot_keys=True,
@@ -82,7 +82,7 @@ class World:
         return v.verify(pay, now=now or self.now, my_key=None if my is None else (my.key_type, my.public_key),
                         my_address=address, request_id=req)
 
-    # --- construção de pagamentos
+    # --- payment construction
     def first(self, to, req, *, slot=0, outputs=None, signer=None):
         outs = outputs or [note_out(self.cap, to)]
         hop = N.spend_root(chain_hash=self.chash(), vault_id=self.vid, slot=slot, cap=self.cap, outputs=outs,
@@ -108,7 +108,7 @@ def w(keys, kt):
     return World(keys, key_type=kt)
 
 
-# ================================================================== formato
+# ================================================================== format
 def sample_tx(**kw):
     base = dict(chain_hash=b"\x01" * 32, vault_id="ab" * 32, input_note=b"\x11" * 32, input_value=100,
                 outputs=(N.NoteOutput(60, N.KIND_NOTE, b"\x22" * 32), N.NoteOutput(40, N.KIND_ADDRESS, N.address_owner(ADDR))),
@@ -126,7 +126,7 @@ def test_offline_tx_roundtrip_ids_and_size():
                    dict(input_value=101), dict(request_id=b"\x08" * 16),
                    dict(outputs=(N.NoteOutput(61, N.KIND_NOTE, b"\x22" * 32), sample_tx().outputs[1])),
                    dict(outputs=(N.NoteOutput(60, N.KIND_NOTE, b"\x23" * 32), sample_tx().outputs[1]))):
-        assert sample_tx(**change).txid != tx.txid                       # TODO campo entra no txid
+        assert sample_tx(**change).txid != tx.txid                       # EVERY field enters the txid
 
 
 def test_offline_tx_strict_parsing():
@@ -137,10 +137,10 @@ def test_offline_tx_strict_parsing():
         b[i] = v
         return bytes(b)
     bad = [b"", raw[:-1], bytes(raw) + b"\x00", mut(0, 2), mut(105, 0), mut(105, 5), mut(105, 1),
-           mut(114, 3),                                    # tipo desconhecido
-           bytes(raw[:106]) + bytes(8) + bytes(raw[114:]),  # valor 0
-           mut(181, 1),                                       # padding do endereço ≠ 0
-           "texto", None, 5]
+           mut(114, 3),                                    # unknown type
+           bytes(raw[:106]) + bytes(8) + bytes(raw[114:]),  # value 0
+           mut(181, 1),                                       # address padding ≠ 0
+           "text", None, 5]
     for b in bad:
         with pytest.raises(ValidationError):
             N.OfflineTx.from_bytes(b)
@@ -155,22 +155,22 @@ def test_commitments_and_note_ids_are_distinct():
            N.child_note_id(b"\x01" * 32, 0), N.child_note_id(b"\x01" * 32, 1), N.child_note_id(b"\x02" * 32, 0)}
     assert len(ids) == 6
     with pytest.raises(ValidationError):
-        N.owner_commitment("ed25519", b"curta")
+        N.owner_commitment("ed25519", b"short")
     with pytest.raises(ValidationError):
         N.owner_commitment("rsa", b"\x00" * 32)
     with pytest.raises(ValidationError):
-        N.address_owner("wflx1invalido")
+        N.address_owner("wflx1invalid")
 
 
-# ================================================================== caminhos felizes
+# ================================================================== happy paths
 def test_one_hop_alice_to_bob(w):
     bob = w.key("bob", R[0])
     v = w.verifier()
     vp = w.verify(v, w.first(bob, R[0]), my=bob, req=R[0])
-    assert vp.status == "RECEBIDA_OFFLINE" and vp.depth == 1 and vp.level == "hardware"
+    assert vp.status == "RECEIVED_OFFLINE" and vp.depth == 1 and vp.level == "hardware"
     assert vp.value == w.cap and vp.hop_levels == ("hardware",) and vp.leaf_kind == N.KIND_NOTE
     assert vp.vault_id == w.vid and len(vp.txids) == 1 and vp.checkpoint_height == w.chain.height
-    v.accept(vp)                                             # grava na memória local
+    v.accept(vp)                                             # writes to local memory
     assert v.checkpoints.min_height() == w.chain.height
 
 
@@ -182,10 +182,10 @@ def test_alice_to_bob_to_carlos_with_change_then_bob_spends_the_change(w):
     assert (vp.depth, vp.level, vp.value) == (2, "hardware", 10 * WFLX)
     assert vp.hop_levels == ("hardware", "hardware")
     eve = w.key("eve", R[2])
-    p3 = w.forward(replace(p2, leaf=1), change, [note_out(20 * WFLX, eve)], R[2], spend=1)   # Bob gasta o troco
+    p3 = w.forward(replace(p2, leaf=1), change, [note_out(20 * WFLX, eve)], R[2], spend=1)   # Bob spends the change
     vp3 = w.verify(w.verifier(), p3, my=eve, req=R[2])
     assert (vp3.depth, vp3.value) == (3, 20 * WFLX)
-    assert N.OfflinePayment.from_dict(json.loads(json.dumps(p3.to_dict()))) == p3     # sobrevive a QR/JSON
+    assert N.OfflinePayment.from_dict(json.loads(json.dumps(p3.to_dict()))) == p3     # survives QR/JSON
 
 
 def test_three_hops_ok_and_four_hops_rejected(w):
@@ -195,7 +195,7 @@ def test_three_hops_ok_and_four_hops_rejected(w):
     p3 = w.forward(p2, carlos, [note_out(w.cap, dave)], R[2])
     assert w.verify(w.verifier(), p3, my=dave, req=R[2]).depth == 3
     p4 = w.forward(p3, dave, [note_out(w.cap, erin)], R[3])
-    with pytest.raises(ValidationError, match="profundidade 4 acima do máximo de 3"):
+    with pytest.raises(ValidationError, match="depth 4 above the maximum of 3"):
         w.verify(w.verifier(), p4, my=erin, req=R[3])
 
 
@@ -205,20 +205,20 @@ def test_terminal_address_output(w):
     p2 = w.forward(p1, bob, [addr_out(w.cap, ADDR)], R[1])
     vp = w.verify(w.verifier(), p2, address=ADDR, req=R[1])
     assert vp.leaf_kind == N.KIND_ADDRESS and vp.value == w.cap
-    with pytest.raises(ValidationError, match="meu endereço"):
+    with pytest.raises(ValidationError, match="my address"):
         w.verify(w.verifier(), p2, address=KeyPair(b"\x09" * 32).address)
 
 
 def test_verifier_requires_exactly_one_recipient_identity(w):
     bob = w.key("bob", R[0])
     p1 = w.first(bob, R[0])
-    with pytest.raises(ValidationError, match="exatamente um"):
+    with pytest.raises(ValidationError, match="exactly one"):
         w.verifier().verify(p1, now=w.now)
-    with pytest.raises(ValidationError, match="exatamente um"):
+    with pytest.raises(ValidationError, match="exactly one"):
         w.verifier().verify(p1, now=w.now, my_key=(bob.key_type, bob.public_key), my_address=ADDR)
 
 
-# ================================================================== política: profundidade, nível e teto
+# ================================================================== policy: depth, level and cap
 def test_software_chain_is_limited_to_one_hop(keys):
     w = World(keys, software_slots=True, cap=4 * WFLX)
     bob, carlos = soft(10), soft(11)
@@ -226,7 +226,7 @@ def test_software_chain_is_limited_to_one_hop(keys):
     vp = w.verify(w.verifier(), p1, my=bob, req=R[0])
     assert vp.level == "software" and vp.depth == 1
     p2 = w.forward(p1, bob, [note_out(w.cap, carlos)], R[1])
-    with pytest.raises(ValidationError, match="profundidade 2 acima do máximo de 1 para nível software"):
+    with pytest.raises(ValidationError, match="depth 2 above the maximum of 1 for software level"):
         w.verify(w.verifier(), p2, my=carlos, req=R[1])
 
 
@@ -235,25 +235,25 @@ def test_one_software_hop_downgrades_the_whole_chain(keys):
     bob_sw, carlos = soft(20), w.key("carlos", R[1])
     p1 = w.first(bob_sw, R[0])
     p2 = w.forward(p1, bob_sw, [note_out(w.cap, carlos)], R[1])
-    with pytest.raises(ValidationError, match="nível software"):
-        w.verify(w.verifier(), p2, my=carlos, req=R[1])        # o pior salto manda
+    with pytest.raises(ValidationError, match="software level"):
+        w.verify(w.verifier(), p2, my=carlos, req=R[1])        # the worst hop decides
     assert w.verify(w.verifier(max_hops_software=2, max_value_software=1000), p2, my=carlos,
-                    req=R[1]).level == "software"              # política mais frouxa do receptor aceita, como software
+                    req=R[1]).level == "software"              # the receiver's looser policy accepts it, as software
 
 
 def test_value_caps_by_level(keys):
     big = World(keys, cap=101 * WFLX)
     bob = big.key("bob", R[0])
-    with pytest.raises(ValidationError, match="teto do nível hardware"):
+    with pytest.raises(ValidationError, match="hardware level cap"):
         big.verify(big.verifier(), big.first(bob, R[0]), my=bob, req=R[0])
     sw = World(keys, software_slots=True, cap=6 * WFLX)
     b2 = soft(30)
-    with pytest.raises(ValidationError, match="teto do nível software"):
+    with pytest.raises(ValidationError, match="software level cap"):
         sw.verify(sw.verifier(), sw.first(b2, R[0]), my=b2, req=R[0])
 
 
 class Swapped:
-    """Mesma chave de hardware, mas apresentando outra atestação (ou nenhuma)."""
+    """Same hardware key, but presenting another attestation (or none)."""
 
     def __init__(self, inner, attestation):
         self._inner, self.attestation = inner, attestation
@@ -284,28 +284,28 @@ def test_bad_attestation_downgrades_to_software_never_upgrades(keys, case):
 
 @pytest.mark.parametrize("kwargs", [dict(alice_level="software"), dict(alice_level="tee", slot_single_use=False)])
 def test_valid_attestation_without_hardware_properties_counts_as_software(keys, kwargs):
-    """Atestação criptograficamente VÁLIDA, mas de chave em software ou sem uso único, não vale como hardware."""
+    """A cryptographically VALID attestation, but for a software key or one without single use, does not count as hardware."""
     w = World(keys, cap=4 * WFLX, **kwargs)
     bob, carlos = w.key("bob", R[0]), w.key("carlos", R[1])
     p1 = w.first(bob, R[0])
     vp = w.verify(w.verifier(), p1, my=bob, req=R[0])
     assert vp.level == "software" and vp.hop_levels == ("software",)
     p2 = w.forward(p1, bob, [note_out(w.cap, carlos)], R[1])
-    with pytest.raises(ValidationError, match="nível software"):
+    with pytest.raises(ValidationError, match="software level"):
         w.verify(w.verifier(), p2, my=carlos, req=R[1])
 
 
 def test_attestation_challenge_must_match_the_request_that_created_the_note(keys):
     w = World(keys, cap=4 * WFLX)
-    bob_wrong = w.person("bob").generate_key("p256", b"\xee" * 16)          # desafio ≠ request_id de t1
+    bob_wrong = w.person("bob").generate_key("p256", b"\xee" * 16)          # challenge ≠ request_id of t1
     carlos = w.key("carlos", R[1])
     p1 = w.first(bob_wrong, R[0])
     p2 = w.forward(p1, bob_wrong, [note_out(w.cap, carlos)], R[1])
-    with pytest.raises(ValidationError, match="nível software"):             # hop 2 rebaixado: profundidade 2 > 1
+    with pytest.raises(ValidationError, match="software level"):             # hop 2 downgraded: depth 2 > 1
         w.verify(w.verifier(), p2, my=carlos, req=R[1])
 
 
-# ================================================================== adulteração e quebra de cadeia
+# ================================================================== tampering and chain breaks
 @pytest.fixture
 def sw(keys):
     return World(keys, software_slots=True, cap=4 * WFLX)
@@ -327,12 +327,12 @@ def swap_last(pay, hop):
 
 
 @pytest.mark.parametrize("change,msg", [
-    (lambda tx: dict(outputs=(replace(tx.outputs[0], value=tx.outputs[0].value - 1),)), "conserva"),
-    (lambda tx: dict(input_value=tx.input_value + 1), "nota esperada"),
-    (lambda tx: dict(input_value=tx.input_value - 1), "nota esperada"),
-    (lambda tx: dict(input_note=b"\x55" * 32), "nota esperada"),
-    (lambda tx: dict(vault_id="ee" * 32), "outro cofre"),
-    (lambda tx: dict(chain_hash=b"\x66" * 32), "outra rede"),
+    (lambda tx: dict(outputs=(replace(tx.outputs[0], value=tx.outputs[0].value - 1),)), "conserved"),
+    (lambda tx: dict(input_value=tx.input_value + 1), "expected note"),
+    (lambda tx: dict(input_value=tx.input_value - 1), "expected note"),
+    (lambda tx: dict(input_note=b"\x55" * 32), "expected note"),
+    (lambda tx: dict(vault_id="ee" * 32), "another vault"),
+    (lambda tx: dict(chain_hash=b"\x66" * 32), "another network"),
 ])
 def test_root_hop_violations_even_with_valid_signatures(sw, change, msg):
     bob = soft(40)
@@ -346,12 +346,12 @@ def test_signer_that_does_not_own_the_note(sw):
     bob = soft(40)
     pay = sw.first(bob, R[0])
     mallory = soft(99)
-    hop = resign(sw, pay.hops[0], mallory)                      # assinatura VÁLIDA, mas de quem não é o dono
-    with pytest.raises(ValidationError, match="não é a dona"):
+    hop = resign(sw, pay.hops[0], mallory)                      # VALID signature, but from someone who is not the owner
+    with pytest.raises(ValidationError, match="is not the owner"):
         sw.verify(sw.verifier(), swap_last(pay, hop), my=bob, req=R[0])
     bob2, carlos, p1, p2 = two_hop(sw)
-    forged = resign(sw, p2.hops[1], mallory)                    # Mallory gasta a nota de Bob
-    with pytest.raises(ValidationError, match="não é a dona"):
+    forged = resign(sw, p2.hops[1], mallory)                    # Mallory spends Bob's note
+    with pytest.raises(ValidationError, match="is not the owner"):
         sw.verify(sw.verifier(), swap_last(p2, forged), my=carlos, req=R[1])
 
 
@@ -360,9 +360,9 @@ def test_signature_tampering(sw):
     for pay, who, req in ((p1, bob, R[0]), (p2, carlos, R[1])):
         h = pay.hops[-1]
         flipped = replace(h, signature=h.signature[:-1] + bytes([h.signature[-1] ^ 1]))
-        with pytest.raises(ValidationError, match="assinatura do salto inválida"):
+        with pytest.raises(ValidationError, match="invalid hop signature"):
             sw.verify(sw.verifier(), swap_last(pay, flipped), my=who, req=req)
-        # alterar o conteúdo depois de assinar
+        # changing the content after signing
         other = replace(h.tx, outputs=(replace(h.tx.outputs[0], owner=b"\x31" * 32),))
         with pytest.raises(ValidationError):
             sw.verify(sw.verifier(), swap_last(pay, replace(h, tx=other)), my=who, req=req)
@@ -375,26 +375,26 @@ def test_p256_high_s_hop_signature_rejected(keys):
     h = pay.hops[0]
     s = int.from_bytes(h.signature[32:], "big")
     bad = replace(h, signature=h.signature[:32] + (_P256_N - s).to_bytes(32, "big"))
-    with pytest.raises(ValidationError, match="assinatura"):
+    with pytest.raises(ValidationError, match="signature"):
         w.verify(w.verifier(), swap_last(pay, bad), my=bob, req=R[0])
 
 
 def test_chain_structure_attacks(sw):
     bob, carlos, p1, p2 = two_hop(sw)
     v = lambda pay, who, req: sw.verify(sw.verifier(max_hops_software=9, max_value_software=999), pay, my=who, req=req)
-    assert v(p2, carlos, R[1]).depth == 2                        # controle (com política frouxa)
-    with pytest.raises(ValidationError, match="nota esperada"):
-        v(replace(p2, hops=(p2.hops[1],)), carlos, R[1])        # t1 omitido
+    assert v(p2, carlos, R[1]).depth == 2                        # control (with a looser policy)
+    with pytest.raises(ValidationError, match="expected note"):
+        v(replace(p2, hops=(p2.hops[1],)), carlos, R[1])        # t1 omitted
     with pytest.raises(ValidationError):
-        v(replace(p2, hops=(p2.hops[1], p2.hops[0])), carlos, R[1])   # ordem trocada
+        v(replace(p2, hops=(p2.hops[1], p2.hops[0])), carlos, R[1])   # order swapped
     eve = soft(60)
     extra = N.spend_output(p2.hops[1], 0, outputs=[note_out(sw.cap, eve)], request_id=R[2], signer=soft(61))
-    with pytest.raises(ValidationError, match="não é a dona"):
-        v(replace(p2, hops=p2.hops + (extra,), leaf=0), eve, R[2])  # salto extra assinado por quem não é dono
-    # emenda: t2 de OUTRA cadeia (outro destinatário) colado em t1
+    with pytest.raises(ValidationError, match="is not the owner"):
+        v(replace(p2, hops=p2.hops + (extra,), leaf=0), eve, R[2])  # extra hop signed by someone who is not the owner
+    # splice: t2 from ANOTHER chain (another recipient) pasted onto t1
     other_p2 = sw.forward(p1, bob, [note_out(sw.cap, soft(70))], R[3])
     spliced = replace(p2, hops=(p2.hops[0], other_p2.hops[1]))
-    with pytest.raises(ValidationError, match="não é uma nota da minha chave"):
+    with pytest.raises(ValidationError, match="not a note of my key"):
         v(spliced, carlos, R[1])
 
 
@@ -402,29 +402,29 @@ def test_leaf_and_request_binding(sw):
     bob, carlos, p1, p2 = two_hop(sw)
     v = sw.verifier(max_hops_software=9, max_value_software=999)
     for bad_leaf in (1, 7, 65535):
-        with pytest.raises(ValidationError, match="folha"):
+        with pytest.raises(ValidationError, match="leaf"):
             sw.verify(v, replace(p2, leaf=bad_leaf), my=carlos, req=R[1])
-    with pytest.raises(ValidationError, match="não é uma nota da minha chave"):
-        sw.verify(v, p2, my=soft(80), req=R[1])                  # a folha é de Carlos, não dele
+    with pytest.raises(ValidationError, match="not a note of my key"):
+        sw.verify(v, p2, my=soft(80), req=R[1])                  # the leaf belongs to Carlos, not to him
     with pytest.raises(ValidationError, match="request_id"):
         sw.verify(v, p2, my=carlos, req=R[5])
-    with pytest.raises(ValidationError, match="slot|vaga"):
+    with pytest.raises(ValidationError, match="slot"):
         sw.verify(v, replace(p2, slot=1), my=carlos, req=R[1])
 
 
-# ================================================================== prova do cofre / frescor
+# ================================================================== vault proof / freshness
 def test_stale_checkpoint_is_rejected_by_receiver_memory(w):
     bob = w.key("bob", R[0])
     pay = w.first(bob, R[0])
     v = w.verifier()
     v.checkpoints.observe(w.chain.height + 5, "ab" * 32)
-    with pytest.raises(ValidationError, match="mais antigo"):
+    with pytest.raises(ValidationError, match="older"):
         w.verify(v, pay, my=bob, req=R[0])
 
 
 def _mutate_registry_and_mine(w, fn):
     fn(w.chain.vaults.get(w.vid))
-    mine(w.chain, w.keys)                                       # novo bloco: state_root passa a refletir a mudança
+    mine(w.chain, w.keys)                                       # new block: state_root now reflects the change
 
 
 def test_fraud_flagged_or_occupied_slot_in_checkpoint_is_rejected(keys):
@@ -432,9 +432,9 @@ def test_fraud_flagged_or_occupied_slot_in_checkpoint_is_rejected(keys):
     _mutate_registry_and_mine(w, lambda vault: setattr(vault, "fraud", True))
     bob = w.key("bob", R[0])
     pay = w.first(bob, R[0])
-    with pytest.raises(ValidationError, match="fraudulento"):
+    with pytest.raises(ValidationError, match="fraudulent"):
         w.verify(w.verifier(), pay, my=bob, req=R[0])
-    assert w.verify(w.verifier(reject_fraud_vault=False), pay, my=bob, req=R[0]).depth == 1   # política do receptor
+    assert w.verify(w.verifier(reject_fraud_vault=False), pay, my=bob, req=R[0]).depth == 1   # receiver's policy
 
     w2 = World(keys)
 
@@ -443,7 +443,7 @@ def test_fraud_flagged_or_occupied_slot_in_checkpoint_is_rejected(keys):
         vault.slots[0].paid = 5
     _mutate_registry_and_mine(w2, occupy)
     bob2 = w2.key("bob", R[0])
-    with pytest.raises(ValidationError, match="ocupada"):
+    with pytest.raises(ValidationError, match="occupied"):
         w2.verify(w2.verifier(), w2.first(bob2, R[0]), my=bob2, req=R[0])
 
 
@@ -451,59 +451,59 @@ def test_margin_and_network_and_legacy_vault(keys):
     w = World(keys)
     bob = w.key("bob", R[0])
     pay = w.first(bob, R[0])
-    with pytest.raises(ValidationError, match="margem"):
+    with pytest.raises(ValidationError, match="margin"):
         w.verify(w.verifier(min_margin_blocks=1), pay, my=bob, req=R[0], now=w.now + 5 * 10_000)
     assert w.verify(w.verifier(min_margin_blocks=1), pay, my=bob, req=R[0], now=w.now).depth == 1
-    other = vchain(keys, chain_id="outra-rede")
+    other = vchain(keys, chain_id="other-network")
     with pytest.raises(ValidationError):
         w.verify(w.verifier(params=other.params), pay, my=bob, req=R[0])
     legacy = World(keys, with_slot_keys=False)
     lb = legacy.key("bob", R[0])
     p = legacy.first(lb, R[0], signer=soft(3, legacy.key_type))
-    with pytest.raises(ValidationError, match="sem chave própria"):
+    with pytest.raises(ValidationError, match="without its own key"):
         legacy.verify(legacy.verifier(), p, my=lb, req=R[0])
 
 
-# ================================================================== memória local e gasto duplo
+# ================================================================== local memory and double spend
 def test_receiver_memory_rejects_a_second_spend_of_the_same_note(sw):
     bob, bob2 = soft(90), soft(91)
     p_a = sw.first(bob, R[0])
-    p_b = sw.first(bob2, R[1])                                   # a MESMA vaga raiz gasta para outra chave
+    p_b = sw.first(bob2, R[1])                                   # the SAME root slot spent to another key
     v = sw.verifier()
     vp = sw.verify(v, p_a, my=bob, req=R[0])
     v.accept(vp)
-    sw.verify(v, p_a, my=bob, req=R[0])                          # reapresentar o MESMO pagamento é idempotente
-    with pytest.raises(ValidationError, match="outra forma"):
+    sw.verify(v, p_a, my=bob, req=R[0])                          # resubmitting the SAME payment is idempotent
+    with pytest.raises(ValidationError, match="another way"):
         sw.verify(v, p_b, my=bob2, req=R[1])
     other_slot = sw.first(bob2, R[2], slot=1)
-    assert sw.verify(v, other_slot, my=bob2, req=R[2]).depth == 1          # outra vaga: sem conflito
+    assert sw.verify(v, other_slot, my=bob2, req=R[2]).depth == 1          # another slot: no conflict
 
 
-# ================================================================== risco residual (documentado)
+# ================================================================== residual risk (documented)
 def test_intact_hardware_physically_prevents_a_second_spend(w):
     bob, carlos, eve = w.key("bob", R[0]), w.key("carlos", R[1]), w.key("eve", R[2])
     p1 = w.first(bob, R[0])
     w.forward(p1, bob, [note_out(w.cap, carlos)], R[1])
-    with pytest.raises(HardwareError, match="já usada"):
-        w.forward(p1, bob, [note_out(w.cap, eve)], R[2])         # Bob não consegue assinar t2'
+    with pytest.raises(HardwareError, match="already used"):
+        w.forward(p1, bob, [note_out(w.cap, eve)], R[2])         # Bob cannot sign t2'
     with pytest.raises(HardwareError):
-        w.first(eve, R[3])                                       # nem Alice reusa a chave da vaga 0 (já gasta)
+        w.first(eve, R[3])                                       # nor can Alice reuse slot 0's key (already spent)
 
 
 def test_compromised_hardware_double_spend_is_accepted_offline_by_both_receivers(keys):
-    """RISCO RESIDUAL (H1): com hardware quebrado, dois receptores isolados aceitam. Quem perde é compensado por R1-R9
-    na liquidação (A3). O verificador NÃO consegue impedir isso offline — e não promete."""
+    """RESIDUAL RISK (H1): with broken hardware, two isolated receivers accept. Whoever loses is compensated by R1-R9
+    at settlement (A3). The verifier CANNOT prevent this offline — and does not promise to."""
     w = World(keys)
     bob, carlos, eve = w.key("bob", R[0]), w.key("carlos", R[1]), w.key("eve", R[2])
     p1 = w.first(bob, R[0])
-    w.people["bob"].break_single_use()                           # adversário: Bob adultera o próprio hardware
+    w.people["bob"].break_single_use()                           # adversary: Bob tampers with his own hardware
     p_carlos = w.forward(p1, bob, [note_out(w.cap, carlos)], R[1])
-    p_eve = w.forward(p1, bob, [note_out(w.cap, eve)], R[2])     # mesma nota, outro destino
+    p_eve = w.forward(p1, bob, [note_out(w.cap, eve)], R[2])     # same note, different destination
     assert w.verify(w.verifier(), p_carlos, my=carlos, req=R[1]).level == "hardware"
     assert w.verify(w.verifier(), p_eve, my=eve, req=R[2]).level == "hardware"
-    shared = w.verifier()                                        # um MESMO receptor veria o conflito
+    shared = w.verifier()                                        # a SAME receiver would see the conflict
     shared.accept(w.verify(shared, p_carlos, my=carlos, req=R[1]))
-    with pytest.raises(ValidationError, match="outra forma"):
+    with pytest.raises(ValidationError, match="another way"):
         w.verify(shared, p_eve, my=eve, req=R[2])
 
 
@@ -512,10 +512,10 @@ def test_software_slot_key_allows_alice_to_double_spend_the_root(keys):
     bob, bob2 = soft(110), soft(111)
     pa, pb = w.first(bob, R[0]), w.first(bob2, R[1])
     assert w.verify(w.verifier(), pa, my=bob, req=R[0]).level == "software"
-    assert w.verify(w.verifier(), pb, my=bob2, req=R[1]).level == "software"   # nível software: só limite+colateral
+    assert w.verify(w.verifier(), pb, my=bob2, req=R[1]).level == "software"   # software level: only limit + collateral
 
 
-# ================================================================== fuzz e propriedades
+# ================================================================== fuzz and properties
 def _paths(o, pre=()):
     if isinstance(o, dict):
         for k, v in o.items():
@@ -548,7 +548,7 @@ def test_payment_fuzz_only_validation_errors(w):
             w.verify(v, m, my=carlos, req=R[1])
         except ValidationError:
             continue
-        assert m == base                                         # só o pagamento original passa
+        assert m == base                                         # only the original payment passes
     for bad in (None, [], "x", {}, 5):
         with pytest.raises(ValidationError):
             w.verify(v, bad, my=carlos, req=R[1])

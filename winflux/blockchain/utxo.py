@@ -1,4 +1,4 @@
-"""Conjunto de saídas não gastas (UTXO set) com desfazimento (undo)."""
+"""Set of unspent outputs (UTXO set) with undo."""
 from dataclasses import dataclass, field
 
 from .transaction import Transaction, TxOutput
@@ -13,7 +13,7 @@ class Undo:
 
 
 class UTXOSet:
-    """Estado derivado da cadeia: pode ser sempre reconstruído a partir dos blocos."""
+    """State derived from the chain: it can always be rebuilt from the blocks."""
 
     def __init__(self):
         self._utxos: dict[Outpoint, TxOutput] = {}
@@ -28,7 +28,7 @@ class UTXOSet:
 
     def _add(self, op, out):
         if op in self._utxos:
-            raise ValueError("outpoint duplicado")
+            raise ValueError("duplicate outpoint")
         self._utxos[op] = out
         self._by_addr.setdefault(out.address, set()).add(op)
         self.total_value += out.value
@@ -67,6 +67,6 @@ class UTXOSet:
         return sum(self._utxos[op].value for op in self._by_addr.get(address, ()))
 
     def utxos_for(self, address: str) -> list:
-        """[(outpoint, TxOutput)] ordenado de forma determinística."""
+        """[(outpoint, TxOutput)] in deterministic order."""
         return sorted(((op, self._utxos[op]) for op in self._by_addr.get(address, ())),
                       key=lambda x: x[0])

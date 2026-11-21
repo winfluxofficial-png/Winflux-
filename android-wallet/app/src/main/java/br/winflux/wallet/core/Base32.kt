@@ -1,6 +1,6 @@
 package br.winflux.wallet.core
 
-/** Base32 RFC 4648, minúsculo, sem preenchimento (como `base64.b32encode(...).lower().rstrip("=")`). */
+/** Base32 RFC 4648, lowercase, no padding (like `base64.b32encode(...).lower().rstrip("=")`). */
 object Base32 {
     private const val ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"
 
@@ -18,7 +18,7 @@ object Base32 {
         return sb.toString()
     }
 
-    /** null se houver caractere fora do alfabeto ou comprimento impossível. Quem chama confere a forma canônica. */
+    /** null if there is a character outside the alphabet or an impossible length. The caller checks the canonical form. */
     fun decode(s: String): ByteArray? {
         if (s.any { it !in ALPHABET }) return null
         if ((s.length * 5) % 8 >= 5) return null

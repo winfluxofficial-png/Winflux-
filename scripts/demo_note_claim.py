@@ -1,10 +1,10 @@
-"""Demo (A3): liquidação on-chain de notas offline (`note_claim`), com gasto duplo e compensação.
+"""Demo (A3): on-chain settlement of offline notes (`note_claim`), with double spend and compensation.
 
     PYTHONPATH=. python scripts/demo_note_claim.py
 
-Alice abre um cofre (vaga de 30 WFLX com chave própria), paga Bob -> Carlos OFFLINE, e a folha-endereço é liquidada
-on-chain. Depois Alice tenta gastar a mesma raiz de novo para Mallory: o segundo ramo é pago pelo COLATERAL (R1-R9),
-o cofre fica marcado como fraudulento. Chaves em software (sem hardware): demonstra o consenso, não segurança de hardware.
+Alice opens a vault (a 30 WFLX slot with its own key), pays Bob -> Carlos OFFLINE, and the address leaf is settled
+on-chain. Then Alice tries to spend the same root again to Mallory: the second branch is paid by the COLLATERAL (R1-R9),
+and the vault is marked as fraudulent. Software keys (no hardware): this demonstrates consensus, not hardware security.
 """
 from winflux.blockchain.chain import Chain
 from winflux.blockchain.genesis import GenesisConfig
@@ -38,22 +38,22 @@ vid, chash, cap = tx.txid, chain_id_hash(params.chain_id), to_units("30")
 to_addr = lambda who: N.NoteOutput(cap, N.KIND_ADDRESS, N.address_owner(who.address))
 req = lambda i: bytes([i]) * 16
 
-print("== OFFLINE: Alice -> Bob (nota) -> Carlos (endereço)")
+print("== OFFLINE: Alice -> Bob (note) -> Carlos (address)")
 t1 = N.spend_root(chain_hash=chash, vault_id=vid, slot=0, cap=cap, request_id=req(1), signer=slot_key,
                   outputs=[N.NoteOutput(cap, N.KIND_NOTE, N.owner_commitment(bob.key_type, bob.public_key))])
 t2 = N.spend_output(t1, 0, outputs=[to_addr(carlos)], request_id=req(2), signer=bob)
 pay = N.OfflinePayment({}, 0, (t1, t2), 0)
 
-print("== ON-CHAIN: note_claim liquida a folha")
+print("== ON-CHAIN: note_claim settles the leaf")
 mine(build_note_claim(pay, chain.get_vault(vid), params))
 s = chain.get_vault(vid).slots[0]
-print(f"   Carlos recebeu {fu(chain.balance(carlos.address))} WFLX | vaga paga={fu(s.paid)} | fraude={chain.get_vault(vid).fraud}")
+print(f"   Carlos received {fu(chain.balance(carlos.address))} WFLX | slot paid={fu(s.paid)} | fraud={chain.get_vault(vid).fraud}")
 
-print("\n== GASTO DUPLO: Alice gasta a mesma raiz para Mallory")
+print("\n== DOUBLE SPEND: Alice spends the same root again, to Mallory")
 evil = N.spend_root(chain_hash=chash, vault_id=vid, slot=0, cap=cap, outputs=[to_addr(mallory)],
                     request_id=req(9), signer=slot_key)
 mine(build_note_claim(N.OfflinePayment({}, 0, (evil,), 0), chain.get_vault(vid), params))
 v = chain.get_vault(vid)
-print(f"   Mallory recebeu {fu(chain.balance(mallory.address))} WFLX do COLATERAL | fraude={v.fraud} "
-      f"| indenizado={fu(v.slots[0].compensated)} | colateral restante={fu(v.slots[0].collateral_left)}")
-print(f"   oferta total consistente: {fu(chain.total_supply())} WFLX")
+print(f"   Mallory received {fu(chain.balance(mallory.address))} WFLX from the COLLATERAL | fraud={v.fraud} "
+      f"| compensated={fu(v.slots[0].compensated)} | remaining collateral={fu(v.slots[0].collateral_left)}")
+print(f"   total supply consistent: {fu(chain.total_supply())} WFLX")

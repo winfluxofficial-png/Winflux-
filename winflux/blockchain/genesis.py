@@ -1,4 +1,4 @@
-"""Configuração e construção do bloco gênese."""
+"""Genesis block configuration and construction."""
 import json
 from dataclasses import dataclass
 
@@ -14,18 +14,18 @@ from .transaction import Transaction, TxOutput
 class GenesisConfig:
     params: ChainParams
     timestamp: int
-    allocations: tuple  # ((endereço, unidades), ...)
+    allocations: tuple  # ((address, units), ...)
 
     def __post_init__(self):
         total = 0
         for addr, amount in self.allocations:
             if not is_valid_address(addr):
-                raise ValidationError(f"endereço inválido no gênese: {addr}")
+                raise ValidationError(f"invalid address in the genesis: {addr}")
             if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
-                raise ValidationError("alocação inválida no gênese")
+                raise ValidationError("invalid allocation in the genesis")
             total += amount
         if total > self.params.max_supply:
-            raise ValidationError("gênese excede a oferta máxima")
+            raise ValidationError("genesis exceeds the maximum supply")
 
     @property
     def total(self) -> int:
@@ -43,7 +43,7 @@ class GenesisConfig:
         except ValidationError:
             raise
         except Exception as e:
-            raise ValidationError(f"genesis.json malformado: {e}") from None
+            raise ValidationError(f"malformed genesis.json: {e}") from None
 
 
 def load_genesis_config(path: str) -> GenesisConfig:
@@ -64,10 +64,10 @@ def build_genesis_block(cfg: GenesisConfig) -> Block:
 
 
 def genesis_fingerprint(params: ChainParams, timestamp: int, allocations) -> str:
-    """8 hex que identificam o gênese SEM usar o chain_id (para derivar um chain_id único).
+    """8 hex digits that identify the genesis WITHOUT using the chain_id (to derive a unique chain_id).
 
-    Dois gêneses diferentes com o mesmo chain_id permitiriam replay entre as redes quando as
-    coinbases coincidem (o txid da coinbase só depende de chain_id, altura e saídas).
+    Two different geneses with the same chain_id would allow replay between networks when the
+    coinbases coincide (the coinbase txid only depends on chain_id, height and outputs).
     """
     d = params.to_dict()
     d.pop("chain_id")

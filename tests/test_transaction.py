@@ -39,7 +39,7 @@ def _mut(f):
 
 
 MALFORMED = [
-    "texto", None, [], {},
+    "text", None, [], {},
     _mut(lambda d: d.update(extra=1)),
     _mut(lambda d: d.pop("outputs")),
     _mut(lambda d: d.update(version="1")),

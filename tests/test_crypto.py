@@ -20,10 +20,10 @@ def test_sign_and_verify():
     k = KeyPair.generate()
     sig = k.sign(b"msg")
     assert verify_signature(k.public_key, sig, b"msg")
-    assert not verify_signature(k.public_key, sig, b"outra")
+    assert not verify_signature(k.public_key, sig, b"other")
     assert not verify_signature(KeyPair.generate().public_key, sig, b"msg")
     assert not verify_signature(k.public_key, sig[:-1] + bytes([sig[-1] ^ 1]), b"msg")
-    assert not verify_signature(b"curta", sig, b"msg")
+    assert not verify_signature(b"short", sig, b"msg")
 
 
 def test_keypair_deterministic_and_repr_hides_seed():
@@ -34,7 +34,7 @@ def test_keypair_deterministic_and_repr_hides_seed():
 
 def test_keypair_rejects_bad_seed():
     with pytest.raises(ValueError):
-        KeyPair(b"curta")
+        KeyPair(b"short")
 
 
 def test_address_roundtrip_and_checksum():
@@ -50,47 +50,47 @@ def test_address_roundtrip_and_checksum():
 
 def test_keystore_roundtrip_and_wrong_password():
     k = KeyPair.generate()
-    ks = encrypt_keystore(k, "senha-de-teste-123", n=KDF_N)
-    assert k.seed.hex() not in json.dumps(ks)  # nunca em texto puro
-    assert decrypt_keystore(ks, "senha-de-teste-123").address == k.address
+    ks = encrypt_keystore(k, "test-password-123", n=KDF_N)
+    assert k.seed.hex() not in json.dumps(ks)  # never in plain text
+    assert decrypt_keystore(ks, "test-password-123").address == k.address
     with pytest.raises(WalletError):
-        decrypt_keystore(ks, "senha-errada-123")
+        decrypt_keystore(ks, "wrong-password-123")
 
 
 def test_keystore_tamper_detected():
     k = KeyPair.generate()
-    ks = encrypt_keystore(k, "senha-de-teste-123", n=KDF_N)
+    ks = encrypt_keystore(k, "test-password-123", n=KDF_N)
     ks["ciphertext"] = ("00" if ks["ciphertext"][:2] != "00" else "01") + ks["ciphertext"][2:]
     with pytest.raises(WalletError):
-        decrypt_keystore(ks, "senha-de-teste-123")
-    ks2 = encrypt_keystore(k, "senha-de-teste-123", n=KDF_N)
+        decrypt_keystore(ks, "test-password-123")
+    ks2 = encrypt_keystore(k, "test-password-123", n=KDF_N)
     ks2["address"] = KeyPair.generate().address
     with pytest.raises(WalletError):
-        decrypt_keystore(ks2, "senha-de-teste-123")
+        decrypt_keystore(ks2, "test-password-123")
 
 
 def test_keystore_rejects_weak_password_and_abusive_kdf():
     k = KeyPair.generate()
     with pytest.raises(WalletError):
-        encrypt_keystore(k, "curta", n=KDF_N)
-    ks = encrypt_keystore(k, "senha-de-teste-123", n=KDF_N)
-    ks["kdf_params"]["n"] = 2**30  # tentativa de DoS por memória
+        encrypt_keystore(k, "short", n=KDF_N)
+    ks = encrypt_keystore(k, "test-password-123", n=KDF_N)
+    ks["kdf_params"]["n"] = 2**30  # memory DoS attempt
     with pytest.raises(WalletError):
-        decrypt_keystore(ks, "senha-de-teste-123")
+        decrypt_keystore(ks, "test-password-123")
     with pytest.raises(WalletError):
-        decrypt_keystore({"lixo": 1}, "senha-de-teste-123")
+        decrypt_keystore({"garbage": 1}, "test-password-123")
 
 
 def test_wallet_file_save_load(tmp_path):
     w = Wallet.create()
     p = tmp_path / "w.json"
-    w.save(str(p), "senha-de-teste-123", kdf_n=KDF_N)
-    assert Wallet.load(str(p), "senha-de-teste-123").address == w.address
+    w.save(str(p), "test-password-123", kdf_n=KDF_N)
+    assert Wallet.load(str(p), "test-password-123").address == w.address
     assert (p.stat().st_mode & 0o777) == 0o600
     with pytest.raises(FileExistsError):
-        w.save(str(p), "senha-de-teste-123", kdf_n=KDF_N)
+        w.save(str(p), "test-password-123", kdf_n=KDF_N)
     with pytest.raises(WalletError):
-        Wallet.load(str(tmp_path / "nao-existe.json"), "x")
+        Wallet.load(str(tmp_path / "does-not-exist.json"), "x")
 
 
 def test_merkle_root_properties():

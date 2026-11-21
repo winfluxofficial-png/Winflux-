@@ -1,13 +1,13 @@
-"""Voucher offline: promessa assinada pela chave do cofre ("a vaga i paga a ao receptor R").
+"""Offline voucher: a promise signed by the vault key ("slot i pays a to receiver R").
 
-Layout binário FIXO (sem ambiguidade de serialização, cabe em QR/BLE/NFC):
+FIXED binary layout (no serialization ambiguity, fits in QR/BLE/NFC):
 
-    corpo (111 bytes) = versão(1) ‖ hash_chain_id(32) ‖ vault_id(32) ‖ vaga(u16) ‖ valor(u64)
-                        ‖ hash160_receptor(20) ‖ request_id(16)
-    voucher (175 B)   = corpo ‖ assinatura(64)
+    body (111 bytes) = version(1) ‖ chain_id_hash(32) ‖ vault_id(32) ‖ slot(u16) ‖ value(u64)
+                        ‖ receiver_hash160(20) ‖ request_id(16)
+    voucher (175 B)   = body ‖ signature(64)
 
-A identidade do voucher (`hash`) cobre SÓ o corpo: assinaturas ECDSA são maleáveis e uma
-variante da assinatura não pode contar como "outro voucher".
+The voucher's identity (`hash`) covers ONLY the body: ECDSA signatures are malleable and a
+signature variant cannot count as "another voucher".
 """
 import struct
 from dataclasses import dataclass
@@ -35,9 +35,9 @@ class Voucher:
     chain_id_hash: bytes
     vault_id: str          # hex 64
     slot: int
-    amount: int            # unidades
-    receiver_hash: bytes   # hash160 do endereço do receptor
-    request_id: bytes      # 16 bytes escolhidos pelo receptor (amarra o voucher ao pedido)
+    amount: int            # units
+    receiver_hash: bytes   # hash160 of the receiver's address
+    request_id: bytes      # 16 bytes chosen by the receiver (ties the voucher to the request)
     signature: bytes = b""
     version: int = VERSION
 
@@ -46,7 +46,7 @@ class Voucher:
             return struct.pack(_FMT, self.version, self.chain_id_hash, bytes.fromhex(self.vault_id),
                                self.slot, self.amount, self.receiver_hash, self.request_id)
         except (struct.error, ValueError, TypeError) as e:
-            raise ValidationError(f"voucher com campos inválidos: {e}") from None
+            raise ValidationError(f"voucher with invalid fields: {e}") from None
 
     def signing_message(self) -> bytes:
         return SIGN_DOMAIN + self.body()
@@ -65,18 +65,18 @@ class Voucher:
     @classmethod
     def from_bytes(cls, raw: bytes) -> "Voucher":
         if not isinstance(raw, (bytes, bytearray)) or len(raw) != TOTAL_LEN:
-            raise ValidationError("voucher com tamanho inválido")
+            raise ValidationError("voucher with invalid size")
         ver, cid, vid, slot, amount, rh, req = struct.unpack(_FMT, bytes(raw[:BODY_LEN]))
         if ver != VERSION:
-            raise ValidationError("versão de voucher não suportada")
+            raise ValidationError("unsupported voucher version")
         return cls(cid, vid.hex(), slot, amount, rh, req, bytes(raw[BODY_LEN:]), ver)
 
     @classmethod
     def issue(cls, device_key, chain_id: str, vault_id: str, slot: int, amount: int,
               receiver_address: str, request_id: bytes) -> "Voucher":
-        """Emite e assina um voucher com a chave do dispositivo (`device_key.sign`)."""
+        """Issues and signs a voucher with the device key (`device_key.sign`)."""
         if not is_valid_address(receiver_address):
-            raise ValidationError("endereço do receptor inválido")
+            raise ValidationError("invalid receiver address")
         v = cls(chain_id_hash(chain_id), vault_id, slot, amount, address_to_hash(receiver_address),
                 request_id)
         return cls(v.chain_id_hash, v.vault_id, v.slot, v.amount, v.receiver_hash, v.request_id,

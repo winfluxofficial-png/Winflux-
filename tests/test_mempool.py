@@ -21,10 +21,10 @@ def test_accepts_valid_rejects_duplicate_and_conflict():
     c = _chain(); m = Mempool(c)
     t1 = _tx(c, 3, 5 * WFLX)
     assert m.add(t1) == 2000 and t1.txid in m
-    with pytest.raises(MempoolError, match="já está"):
+    with pytest.raises(MempoolError, match="already"):
         m.add(t1)
-    with pytest.raises(MempoolError, match="conflito"):
-        m.add(_tx(c, 4, 7 * WFLX, fee=9000))        # gasta a mesma saída (sem RBF)
+    with pytest.raises(MempoolError, match="conflict"):
+        m.add(_tx(c, 4, 7 * WFLX, fee=9000))        # spends the same output (no RBF)
     assert len(m) == 1
 
 
@@ -38,7 +38,7 @@ def test_rejects_invalid_and_low_fee():
 def test_block_inclusion_clears_and_candidates_by_feerate():
     c = _chain(); m = Mempool(c)
     c.add_block(mine_on(c, kp(9).address))
-    # duas saídas distintas para poder enviar duas transações independentes
+    # two distinct outputs so two independent transactions can be sent
     split = build_transfer(kp(2), c.utxo.utxos_for(kp(2).address), kp(5).address, 100 * WFLX, 2000, c.params.chain_id)
     c.add_block(mine_on(c, kp(9).address, [split]))
     a = _tx(c, 3, WFLX, fee=2000, who=2)
@@ -57,14 +57,14 @@ def test_reorg_returns_transactions_and_drops_double_spends():
     m = Mempool(a)
     tx = _tx(a, 3, 5 * WFLX)
     a.add_block(mine_on(a, kp(4).address, [tx]))
-    # ramo B gasta a MESMA saída para outro destino e é mais pesado
+    # branch B spends the SAME output to another destination and is heavier
     rival = _tx(b, 6, 9 * WFLX, fee=3000)
     b.add_block(mine_on(b, kp(5).address, [rival], ts=T0 + 50))
     b.add_block(mine_on(b, kp(5).address, ts=T0 + 60))
     a.add_block(b.blocks[1])
     res = a.add_block(b.blocks[2])
     m.on_chain_update(res)
-    assert tx.txid not in m                      # virou gasto duplo: descartada
+    assert tx.txid not in m                      # became a double spend: discarded
     assert a.balance(kp(6).address) == 9 * WFLX
 
 
@@ -72,7 +72,7 @@ def test_eviction_of_lowest_rate_when_full():
     c = _chain(); m = Mempool(c, max_txs=1)
     low = _tx(c, 3, WFLX, fee=2000)
     m.add(low)
-    # outra saída para um segundo remetente
+    # another output for a second sender
     c.add_block(mine_on(c, kp(9).address))
     split = build_transfer(kp(2), c.utxo.utxos_for(kp(2).address), kp(5).address, 100 * WFLX, 2000, c.params.chain_id)
     m2 = Mempool(c, max_txs=1)
@@ -80,5 +80,5 @@ def test_eviction_of_lowest_rate_when_full():
     lo = _tx(c, 3, WFLX, fee=2000, who=2); hi = _tx(c, 3, WFLX, fee=90_000, who=5)
     m2.add(lo); m2.add(hi)
     assert hi.txid in m2 and lo.txid not in m2
-    with pytest.raises(MempoolError, match="cheio"):
+    with pytest.raises(MempoolError, match="full"):
         m2.add(_tx(c, 4, WFLX, fee=2001, who=2))

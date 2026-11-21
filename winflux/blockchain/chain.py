@@ -1,11 +1,11 @@
-"""Cadeia com árvore de blocos, escolha por maior trabalho e reorganização (reorg).
+"""Chain with a block tree, heaviest-work selection and reorganization (reorg).
 
-* Todo bloco com pai conhecido que passa nas regras SEM estado (formato, Merkle, consenso,
-  tempo) entra na árvore. Só a cadeia ativa é aplicada ao ledger.
-* A cadeia ativa é a de maior trabalho acumulado. Quando um ramo lateral supera a ativa, o
-  ledger desfaz os blocos até o ancestral comum e aplica o novo ramo, validando cada transação.
-  Se o novo ramo for inválido, a cadeia anterior é restaurada e o ramo é marcado como inválido.
-* Blocos cujo pai é desconhecido levantam `OrphanBlock` (o nó os guarda e pede o pai).
+* Every block with a known parent that passes the STATELESS rules (format, Merkle, consensus,
+  time) enters the tree. Only the active chain is applied to the ledger.
+* The active chain is the one with the most accumulated work. When a side branch overtakes the active one, the
+  ledger undoes the blocks back to the common ancestor and applies the new branch, validating each transaction.
+  If the new branch is invalid, the previous chain is restored and the branch is marked invalid.
+* Blocks whose parent is unknown raise `OrphanBlock` (the node keeps them and asks for the parent).
 """
 import time
 from dataclasses import dataclass, field
@@ -21,25 +21,25 @@ from .validation import validate_coinbase
 
 
 class OrphanBlock(ValidationError):
-    """O pai (prev_hash) do bloco ainda não é conhecido."""
+    """The block's parent (prev_hash) is not known yet."""
 
 
 class KnownBlock(ValidationError):
-    """Bloco já conhecido (duplicado)."""
+    """Block already known (duplicate)."""
 
 
 @dataclass
 class _Entry:
     block: Block
-    work: int          # trabalho acumulado até este bloco (inclusive)
-    target: int        # alvo PoW exigido deste bloco (0 em PoA)
+    work: int          # accumulated work up to this block (inclusive)
+    target: int        # PoW target required for this block (0 in PoA)
 
 
 @dataclass
 class AddResult:
     status: str                                   # "extended" | "reorg" | "side"
-    connected: list = field(default_factory=list)     # blocos que entraram na cadeia ativa
-    disconnected: list = field(default_factory=list)  # blocos que saíram dela (reorg)
+    connected: list = field(default_factory=list)     # blocks that entered the active chain
+    disconnected: list = field(default_factory=list)  # blocks that left it (reorg)
 
 
 class Chain:
@@ -49,12 +49,12 @@ class Chain:
         self.storage = storage
         self._clock = clock
         self.genesis_block = build_genesis_block(genesis)
-        self.blocks: list[Block] = []                 # cadeia ativa, índice = altura
+        self.blocks: list[Block] = []                 # active chain, index = height
         self.ledger = Ledger(self.params)
         self.utxo = self.ledger.utxo
         self.vaults = self.ledger.vaults
-        self._undos: list[list] = []                  # desfazimentos por bloco ativo
-        self._index_by_hash: dict[str, _Entry] = {}   # todos os blocos conhecidos (árvore)
+        self._undos: list[list] = []                  # undo records per active block
+        self._index_by_hash: dict[str, _Entry] = {}   # all known blocks (tree)
         self._invalid: set[str] = set()
         self._tx_height: dict[str, int] = {}
         self._hash_height: dict[str, int] = {}
@@ -63,7 +63,7 @@ class Chain:
         if storage is not None:
             self._load_from_storage()
 
-    # ---------- inicialização ----------
+    # ---------- initialization ----------
     def _install_genesis(self):
         g = self.genesis_block
         limit = int(self.params.pow_limit, 16) if self.params.consensus == "pow" else 0
@@ -78,13 +78,13 @@ class Chain:
             self.storage.append_block(self.genesis_block)
             return
         if stored[0].hash != self.genesis_block.hash:
-            raise StorageError("o gênese armazenado não é o desta rede")
-        for b in stored[1:]:  # revalida tudo: o disco não é confiável
+            raise StorageError("the stored genesis is not this network's")
+        for b in stored[1:]:  # revalidates everything: the disk is not trusted
             try:
                 self._accept_stateless(b, check_time=False)
                 self._connect_active(b, check_time=False)
             except ValidationError as e:
-                raise StorageError(f"bloco {b.height} armazenado é inválido: {e}") from None
+                raise StorageError(f"stored block {b.height} is invalid: {e}") from None
 
     def _index(self, block: Block):
         self._hash_height[block.hash] = block.height
@@ -104,12 +104,12 @@ class Chain:
                 else:
                     self._seen_addresses.pop(o.address, None)
 
-    # ---------- visão para o consenso (dificuldade) ----------
+    # ---------- view for consensus (difficulty) ----------
     def target_of(self, block_hash: str) -> int:
         return self._index_by_hash[block_hash].target
 
     def ancestor(self, block: Block, n: int) -> Block | None:
-        """Bloco n passos antes de `block`, seguindo o ramo de `block` (não necessariamente o ativo)."""
+        """Block n steps before `block`, following `block`'s branch (not necessarily the active one)."""
         cur = block
         for _ in range(n):
             if cur.height == 0:
@@ -120,7 +120,7 @@ class Chain:
             cur = ent.block
         return cur
 
-    # ---------- consultas ----------
+    # ---------- queries ----------
     @property
     def tip(self) -> Block:
         return self.blocks[-1]
@@ -134,7 +134,7 @@ class Chain:
         return self._index_by_hash[self.tip.hash].work
 
     def next_target(self) -> int:
-        """Alvo exigido do próximo bloco sobre o topo ativo (0 em PoA)."""
+        """Target required of the next block on top of the active tip (0 in PoA)."""
         return self.consensus.next_target(self.tip, self.params, self)
 
     def has_block(self, h: str) -> bool:
@@ -147,7 +147,7 @@ class Chain:
         return self.blocks[height] if 0 <= height < len(self.blocks) else None
 
     def get_block_by_hash(self, h: str) -> Block | None:
-        """Bloco da cadeia ATIVA com esse hash (ramos laterais não são devolvidos)."""
+        """ACTIVE-chain block with this hash (side branches are not returned)."""
         height = self._hash_height.get(h)
         return None if height is None else self.blocks[height]
 
@@ -156,7 +156,7 @@ class Chain:
         return None if ent is None else ent.block
 
     def get_transaction(self, txid: str):
-        """(Transaction, altura) ou None."""
+        """(Transaction, height) or None."""
         height = self._tx_height.get(txid)
         if height is None:
             return None
@@ -170,7 +170,7 @@ class Chain:
         return 0 if h is None else self.height - h + 1
 
     def address_seen(self, address: str) -> bool:
-        """True se o endereço já recebeu alguma saída na cadeia (usado na recuperação de carteiras)."""
+        """True if the address has ever received an output on the chain (used in wallet recovery)."""
         return address in self._seen_addresses
 
     def balance(self, address: str) -> int:
@@ -183,12 +183,12 @@ class Chain:
         return self.vaults.get(vault_id)
 
     def check_transaction(self, tx: Transaction) -> int:
-        """Valida uma transação contra o estado atual (usada pelo mempool). Retorna a taxa."""
+        """Validates a transaction against the current state (used by the mempool). Returns the fee."""
         return self.ledger.check(tx, self.height + 1).fee
 
-    # ---------- sincronização ----------
+    # ---------- synchronization ----------
     def locator(self) -> list:
-        """Hashes da cadeia ativa do topo para trás com passos crescentes (termina no gênese)."""
+        """Active-chain hashes from the tip backwards with growing steps (ends at the genesis)."""
         out, step, h = [], 1, self.height
         while h > 0:
             out.append(self.blocks[h].hash)
@@ -199,7 +199,7 @@ class Chain:
         return out
 
     def blocks_after(self, locator, limit: int = 500) -> list:
-        """Blocos da cadeia ativa logo após o primeiro hash do localizador que esteja nela."""
+        """Active-chain blocks right after the first locator hash that is on it."""
         start = 0
         for h in locator[:64]:
             if isinstance(h, str) and h in self._hash_height:
@@ -207,17 +207,17 @@ class Chain:
                 break
         return self.blocks[start + 1:start + 1 + max(0, limit)]
 
-    # ---------- produção de blocos ----------
+    # ---------- block production ----------
     def max_reward(self, height: int) -> int:
-        """Recompensa permitida: agenda de halving limitada pela oferta restante."""
+        """Allowed reward: halving schedule limited by the remaining supply."""
         return max(0, min(self.params.reward_at(height),
                           self.params.max_supply - self.ledger.total_supply()))
 
     def create_block(self, producer_pubkey: str, reward_address: str, candidates,
                      timestamp: int | None = None) -> Block:
-        """Monta um bloco (ainda sem selo/nonce) com as transações válidas dentre `candidates`.
+        """Builds a block (still without seal/nonce) with the valid transactions among `candidates`.
 
-        Em PoW use `producer_pubkey=""`.
+        In PoW use `producer_pubkey=""`.
         """
         tip = self.tip
         height = tip.height + 1
@@ -244,7 +244,7 @@ class Chain:
                 used += size
                 fees += fee
             reward = self.max_reward(height) + fees
-            state_root = self.ledger.state_root()      # estado APÓS as transações selecionadas
+            state_root = self.ledger.state_root()      # state AFTER the selected transactions
         finally:
             for u in reversed(undos):
                 self.ledger.revert(u)
@@ -252,23 +252,23 @@ class Chain:
         cb = Transaction(self.params.chain_id, (), outs, coinbase_height=height, payload=cb_payload)
         return Block.build(height, tip.hash, ts, producer_pubkey, [cb, *selected], state_root=state_root)
 
-    # ---------- validação e conexão ----------
+    # ---------- validation and connection ----------
     def add_block(self, block: Block) -> AddResult:
-        """Valida e incorpora um bloco. Levanta ValidationError (OrphanBlock/KnownBlock são subclasses)."""
+        """Validates and incorporates a block. Raises ValidationError (OrphanBlock/KnownBlock are subclasses)."""
         h = block.hash
         if h in self._invalid:
-            raise ValidationError("bloco já foi rejeitado como inválido")
+            raise ValidationError("block was already rejected as invalid")
         if h in self._index_by_hash:
-            raise KnownBlock("bloco já conhecido")
+            raise KnownBlock("block already known")
         parent = self._index_by_hash.get(block.prev_hash)
         if parent is None:
-            raise OrphanBlock("prev_hash desconhecido (bloco órfão)")
+            raise OrphanBlock("unknown prev_hash (orphan block)")
         if block.prev_hash in self._invalid:
-            raise ValidationError("o bloco descende de um bloco inválido")
+            raise ValidationError("the block descends from an invalid block")
         entry = self._accept_stateless(block, check_time=True)
         tip_ent = self._index_by_hash[self.tip.hash]
         if block.prev_hash == self.tip.hash:
-            # caso comum: estende o topo. Valida as transações; se falhar, o bloco é descartado.
+            # common case: extends the tip. Validates the transactions; if it fails, the block is discarded.
             try:
                 self._connect_active(block, check_time=False, persist=True)
             except Exception:
@@ -283,28 +283,28 @@ class Chain:
         self._index_by_hash.pop(block.hash, None)
 
     def _accept_stateless(self, block: Block, check_time: bool) -> _Entry:
-        """Regras que não dependem do estado das transações; registra o bloco na árvore."""
+        """Rules that do not depend on transaction state; records the block in the tree."""
         parent = self._index_by_hash[block.prev_hash].block
         p = self.params
         if block.height != parent.height + 1:
-            raise ValidationError("altura inesperada")
+            raise ValidationError("unexpected height")
         if block.timestamp <= parent.timestamp:
-            raise ValidationError("timestamp não é posterior ao do bloco anterior")
+            raise ValidationError("timestamp is not later than the previous block's")
         if check_time and block.timestamp > int(self._clock()) + p.max_future_drift:
-            raise ValidationError("timestamp muito no futuro")
+            raise ValidationError("timestamp too far in the future")
         txs = block.transactions
         if not txs or len(txs) > p.max_block_txs:
-            raise ValidationError("número de transações inválido")
+            raise ValidationError("invalid number of transactions")
         if sum(t.size() for t in txs) > p.max_block_bytes:
-            raise ValidationError("bloco excede o tamanho máximo em bytes")
+            raise ValidationError("block exceeds the maximum size in bytes")
         ids = [t.txid for t in txs]
         if len(set(ids)) != len(ids):
-            raise ValidationError("txids repetidos no bloco")
+            raise ValidationError("repeated txids in the block")
         if block.merkle_root != merkle_root(ids):
-            raise ValidationError("raiz de Merkle não confere")
+            raise ValidationError("Merkle root does not match")
         self.consensus.verify_block(block, parent, p, self)
         if not txs[0].is_coinbase or any(t.is_coinbase for t in txs[1:]):
-            raise ValidationError("o bloco deve ter exatamente uma coinbase, na primeira posição")
+            raise ValidationError("the block must have exactly one coinbase, in the first position")
         pe = self._index_by_hash[block.prev_hash]
         target = self.consensus.next_target(parent, p, self)
         ent = _Entry(block, pe.work + self.consensus.block_work(target), target)
@@ -312,10 +312,10 @@ class Chain:
         return ent
 
     def _connect_active(self, block: Block, check_time: bool = False, persist: bool = False) -> None:
-        """Aplica o bloco (filho do topo ativo) ao ledger, validando cada transação."""
+        """Applies the block (child of the active tip) to the ledger, validating each transaction."""
         prev, p = self.tip, self.params
         if block.prev_hash != prev.hash or block.height != prev.height + 1:
-            raise ValidationError("prev_hash não aponta para o topo da cadeia")
+            raise ValidationError("prev_hash does not point to the chain tip")
         txs = block.transactions
         supply_before = self.ledger.total_supply()
         undos, fees = [], 0
@@ -328,13 +328,13 @@ class Chain:
             validate_coinbase(txs[0], block.height, p, allowed, block.prev_hash)
             undos.append(self.ledger.apply(txs[0], None))
             if self.ledger.total_supply() > p.max_supply:
-                raise ValidationError("oferta máxima excedida")
+                raise ValidationError("maximum supply exceeded")
             if block.state_root != self.ledger.state_root():
-                raise ValidationError("state_root do bloco não confere com o registro de cofres")
+                raise ValidationError("block's state_root does not match the vault registry")
             if persist and self.storage is not None:
                 self.storage.append_block(block)
         except Exception:
-            for u in reversed(undos):  # atomicidade: bloco inválido não deixa rastro
+            for u in reversed(undos):  # atomicity: an invalid block leaves no trace
                 self.ledger.revert(u)
             raise
         self.blocks.append(block)
@@ -372,7 +372,7 @@ class Chain:
         except Exception:
             for _ in range(connected):
                 self._disconnect_tip()
-            for b in old:                       # restaura a cadeia anterior (era válida)
+            for b in old:                       # restores the previous chain (it was valid)
                 self._connect_active(b, check_time=False)
             bad = path[connected] if connected < len(path) else path[-1]
             self._mark_invalid(bad)
@@ -380,7 +380,7 @@ class Chain:
         return AddResult("reorg", list(path), disconnected)
 
     def _mark_invalid(self, block: Block) -> None:
-        """Marca o bloco e todos os seus descendentes conhecidos como inválidos."""
+        """Marks the block and all its known descendants as invalid."""
         bad = {block.hash}
         changed = True
         while changed:

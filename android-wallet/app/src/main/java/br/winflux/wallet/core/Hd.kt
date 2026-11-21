@@ -1,10 +1,10 @@
 package br.winflux.wallet.core
 
-/** Carteira HD determinística, compatível com `winflux/wallet/hd.py` (mesma chave de recuperação, mesmos endereços). */
+/** Deterministic HD wallet, compatible with `winflux/wallet/hd.py` (same recovery key, same addresses). */
 class HdWallet(master: ByteArray, private val ed: Ed25519) {
     private val master = master.copyOf()
 
-    init { require(master.size == 32) { "semente-mestra deve ter 32 bytes" } }
+    init { require(master.size == 32) { "master seed must be 32 bytes" } }
 
     class Key(val index: Int, val seed: ByteArray, val pub: ByteArray, val address: String)
 
@@ -42,15 +42,15 @@ class HdWallet(master: ByteArray, private val ed: Ed25519) {
             return RECOVERY_PREFIX + b32.chunked(4).joinToString("-")
         }
 
-        /** Tolera hífens, espaços e maiúsculas. Lança IllegalArgumentException se inválida (erro de digitação etc.). */
+        /** Tolerates hyphens, spaces and uppercase. Throws IllegalArgumentException if invalid (typo etc.). */
         fun decodeRecoveryKey(text: String): ByteArray {
             val t = text.lowercase().filter { !it.isWhitespace() && it != '-' }
             val prefix = RECOVERY_PREFIX.trimEnd('-')
-            require(t.startsWith(prefix)) { "chave de recuperação com prefixo inválido" }
+            require(t.startsWith(prefix)) { "recovery key with invalid prefix" }
             val body = t.substring(prefix.length)
-            val raw = Base32.decode(body) ?: throw IllegalArgumentException("chave de recuperação malformada")
+            val raw = Base32.decode(body) ?: throw IllegalArgumentException("malformed recovery key")
             require(raw.size == 36 && Base32.encode(raw) == body && raw.copyOfRange(32, 36).contentEquals(tag(raw.copyOf(32)))) {
-                "chave de recuperação inválida (erro de digitação?)"
+                "invalid recovery key (typo?)"
             }
             return raw.copyOf(32)
         }

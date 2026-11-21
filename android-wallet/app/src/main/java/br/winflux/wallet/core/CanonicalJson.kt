@@ -1,8 +1,8 @@
 package br.winflux.wallet.core
 
 /**
- * JSON canônico idêntico ao do nó (`json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True)`).
- * Aceita null, Boolean, Int, Long, String, Map<String, *> e List<*>. Qualquer divergência aqui muda o txid.
+ * Canonical JSON identical to the node's (`json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True)`).
+ * Accepts null, Boolean, Int, Long, String, Map<String, *> and List<*>. Any divergence here changes the txid.
  */
 object CanonicalJson {
     fun encode(v: Any?): String = StringBuilder().also { write(it, v) }.toString()
@@ -31,7 +31,7 @@ object CanonicalJson {
                 v.forEachIndexed { i, x -> if (i > 0) sb.append(','); write(sb, x) }
                 sb.append(']')
             }
-            else -> throw IllegalArgumentException("tipo não suportado: ${v::class}")
+            else -> throw IllegalArgumentException("unsupported type: ${v::class}")
         }
     }
 

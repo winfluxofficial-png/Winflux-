@@ -1,4 +1,4 @@
-"""Persistência local dos blocos em SQLite (o UTXO set é reconstruído na carga)."""
+"""Local block persistence in SQLite (the UTXO set is rebuilt on load)."""
 import json
 import sqlite3
 import threading
@@ -20,7 +20,7 @@ class BlockStorage:
                              "data TEXT NOT NULL)")
             self._db.commit()
         except sqlite3.Error as e:
-            raise StorageError(f"não foi possível abrir {path}: {e}") from None
+            raise StorageError(f"could not open {path}: {e}") from None
 
     def load_blocks(self) -> list:
         with self._lock:
@@ -28,15 +28,15 @@ class BlockStorage:
                 rows = self._db.execute(
                     "SELECT height, hash, data FROM blocks ORDER BY height").fetchall()
             except sqlite3.Error as e:
-                raise StorageError(f"leitura falhou: {e}") from None
+                raise StorageError(f"read failed: {e}") from None
         blocks = []
         for expected_h, (height, h, data) in enumerate(rows):
             try:
                 b = Block.from_dict(json.loads(data))
             except (ValueError, ValidationError) as e:
-                raise StorageError(f"bloco {height} corrompido: {e}") from None
+                raise StorageError(f"block {height} corrupted: {e}") from None
             if height != expected_h or b.height != height or b.hash != h:
-                raise StorageError(f"bloco {height} inconsistente no armazenamento")
+                raise StorageError(f"block {height} inconsistent in storage")
             blocks.append(b)
         return blocks
 
@@ -47,10 +47,10 @@ class BlockStorage:
                     self._db.execute("INSERT INTO blocks(height, hash, data) VALUES(?,?,?)",
                                      (block.height, block.hash, json.dumps(block.to_dict())))
             except sqlite3.Error as e:
-                raise StorageError(f"gravação falhou: {e}") from None
+                raise StorageError(f"write failed: {e}") from None
 
     def reorganize(self, fork_height: int, new_blocks) -> None:
-        """Troca, numa única transação, tudo acima de `fork_height` pelos `new_blocks`."""
+        """Swaps, in a single transaction, everything above `fork_height` for the `new_blocks`."""
         with self._lock:
             try:
                 with self._db:
@@ -59,7 +59,7 @@ class BlockStorage:
                         self._db.execute("INSERT INTO blocks(height, hash, data) VALUES(?,?,?)",
                                          (b.height, b.hash, json.dumps(b.to_dict())))
             except sqlite3.Error as e:
-                raise StorageError(f"reorganização falhou: {e}") from None
+                raise StorageError(f"reorganization failed: {e}") from None
 
     def close(self) -> None:
         with self._lock:

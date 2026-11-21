@@ -1,9 +1,9 @@
-"""Logging do nó: níveis, arquivo com rotação e REDAÇÃO de segredos.
+"""Node logging: levels, rotating file and secret REDACTION.
 
-Regras do projeto: nunca registrar corpo de mensagens/transações, senhas, sementes, chaves privadas, chaves de
-recuperação nem conteúdo de carteiras. Erros vindos da rede (peer ou cliente HTTP) registram só o TIPO da exceção, não
-a mensagem; mensagens de `ValidationError` (regras públicas do protocolo) podem aparecer. Como defesa adicional, todo
-texto passa por `redact()` antes de ser gravado, mesmo que alguém logue algo indevido por engano.
+Project rules: never log message/transaction bodies, passwords, seeds, private keys, recovery
+keys or wallet contents. Errors coming from the network (peer or HTTP client) log only the exception TYPE, not
+the message; `ValidationError` messages (public protocol rules) may appear. As an additional defense, all
+text goes through `redact()` before being written, even if someone logs something inappropriate by mistake.
 """
 import logging
 import re
@@ -15,13 +15,13 @@ from .errors import ValidationError
 LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
 
 _REDACTIONS = [
-    (re.compile(r"(?i)\b(authorization)\s*[:=]\s*[^\r\n]+"), r"\1: [REDIGIDO]"),
-    (re.compile(r"(?i)\bbearer\s+\S+"), "Bearer [REDIGIDO]"),
-    (re.compile(r"wflxk1-[a-z2-7\- ]{8,}", re.I), "wflxk1-[REDIGIDO]"),
-    (re.compile(r"(?i)\b(password|passwd|senha|secret|segredo|seed|semente|private[_ -]?key|chave[_ -]?privada|"
-                r"recovery|recupera[cç][aã]o|mnemonic|token)\b(\s*[=:]\s*|\s+)([^\s,;]+)"),
-     r"\1\2[REDIGIDO]"),
-    (re.compile(r"(?i)\b(secret|seed|priv(?:ate)?)_?key\"?\s*:\s*\"[^\"]*\""), r'\1_key": "[REDIGIDO]"'),
+    (re.compile(r"(?i)\b(authorization)\s*[:=]\s*[^\r\n]+"), r"\1: [REDACTED]"),
+    (re.compile(r"(?i)\bbearer\s+\S+"), "Bearer [REDACTED]"),
+    (re.compile(r"wflxk1-[a-z2-7\- ]{8,}", re.I), "wflxk1-[REDACTED]"),
+    (re.compile(r"(?i)\b(password|passwd|secret|seed|private[_ -]?key|"
+                r"recovery|mnemonic|token)\b(\s*[=:]\s*|\s+)([^\s,;]+)"),
+     r"\1\2[REDACTED]"),
+    (re.compile(r"(?i)\b(secret|seed|priv(?:ate)?)_?key\"?\s*:\s*\"[^\"]*\""), r'\1_key": "[REDACTED]"'),
 ]
 
 
@@ -33,18 +33,18 @@ def redact(text: str) -> str:
 
 class RedactingFormatter(logging.Formatter):
     def format(self, record):
-        return redact(super().format(record))        # cobre mensagem E traceback
+        return redact(super().format(record))        # covers message AND traceback
 
 
 def exc_label(e: BaseException) -> str:
-    """Rótulo seguro para logar uma exceção: regra do protocolo (texto) ou só o tipo (rede/IO/inesperado)."""
+    """Safe label for logging an exception: protocol rule (text) or just the type (network/IO/unexpected)."""
     return str(e)[:200] if isinstance(e, ValidationError) else type(e).__name__
 
 
 def setup_logging(level: str = "info", logfile: str | None = None, stream=None) -> logging.Logger:
-    """Configura o logger "winflux" (idempotente). `stream` padrão: stdout."""
+    """Configures the "winflux" logger (idempotent). Default `stream`: stdout."""
     if level not in LEVELS:
-        raise ValueError(f"nível de log inválido: {level} (use {', '.join(LEVELS)})")
+        raise ValueError(f"invalid log level: {level} (use {', '.join(LEVELS)})")
     lg = logging.getLogger("winflux")
     lg.setLevel(LEVELS[level])
     lg.propagate = False
@@ -62,7 +62,7 @@ def setup_logging(level: str = "info", logfile: str | None = None, stream=None) 
 
 
 def make_log(component: str = "node"):
-    """Devolve `log(msg, level="info")`, a interface usada por Node/P2P/API."""
+    """Returns `log(msg, level="info")`, the interface used by Node/P2P/API."""
     lg = logging.getLogger(f"winflux.{component}")
 
     def log(msg: str, level: str = "info") -> None:

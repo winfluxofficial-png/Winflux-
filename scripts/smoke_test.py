@@ -1,17 +1,17 @@
-"""Smoke test de ponta a ponta da testnet Winflux. Verifica, em ordem:
+"""End-to-end smoke test of the Winflux testnet. Checks, in order:
 
-  1. os nós sobem, estão na mesma rede e se enxergam;
-  2. a mineração produz blocos e a recompensa chega ao minerador;
-  3. uma transação enviada a um nó se propaga, é minerada e chega a todos;
-  4. todos os nós convergem (mesmo topo/oferta) e um nó que entra TARDE sincroniza a cadeia toda;
-  5. fluxo offline: abre cofre com chave por vaga, paga Bob -> Carol OFFLINE, liquida com `note_claim` num nó
-     diferente, confere saldo, estado do cofre, relatório de reconciliação (A4) e rejeição de reapresentação.
+  1. the nodes start, are on the same network and see each other;
+  2. mining produces blocks and the reward reaches the miner;
+  3. a transaction sent to one node propagates, is mined and reaches everyone;
+  4. all nodes converge (same tip/supply) and a node that joins LATE syncs the whole chain;
+  5. offline flow: opens a vault with a key per slot, pays Bob -> Carol OFFLINE, settles with `note_claim` on a
+     different node, checks the balance, the vault state, the reconciliation report (A4) and rejection of resubmission.
 
-    PYTHONPATH=. python scripts/smoke_test.py                    # sobe uma testnet local temporária e derruba no fim
+    PYTHONPATH=. python scripts/smoke_test.py                    # starts a temporary local testnet and tears it down at the end
     PYTHONPATH=. python scripts/smoke_test.py --nodes http://127.0.0.1:18080,http://127.0.0.1:18081 \\
-        --wallet local-testnet/miner.wallet.json                 # contra uma rede já rodando (pula o passo do nó tardio)
+        --wallet local-testnet/miner.wallet.json                 # against an already running network (skips the late-node step)
 
-Código de saída 0 = tudo passou. Usa chaves/senha de devnet: SOMENTE testes locais.
+Exit code 0 = everything passed. Uses devnet keys/password: LOCAL tests only.
 """
 import argparse
 import os
@@ -53,7 +53,7 @@ def wait(cond, timeout, what, every=0.5):
         except (WinfluxError, OSError, KeyError):
             pass
         time.sleep(every)
-    raise AssertionError(f"tempo esgotado esperando: {what}")
+    raise AssertionError(f"timed out waiting for: {what}")
 
 
 def step(title):
@@ -67,7 +67,7 @@ def step(title):
                 return out
             except Exception as e:
                 RESULTS.append((title, False, str(e) or type(e).__name__))
-                print(f"[FALHOU] {title}: {e or type(e).__name__}", flush=True)
+                print(f"[FAILED] {title}: {e or type(e).__name__}", flush=True)
                 if os.environ.get("SMOKE_TRACE"):
                     traceback.print_exc()
                 return None
@@ -82,7 +82,7 @@ class Smoke:
         self.params = ChainParams.from_dict(api(urls[0], "/api/params"))
         self.fee = self.params.min_fee
 
-    # ---------- utilidades ----------
+    # ---------- utilities ----------
     def status(self, url):
         return api(url, "/api/status")
 
@@ -106,70 +106,70 @@ class Smoke:
             return False
 
     def fund(self, to_address, amount, via):
-        """Paga `amount` a `to_address` a partir da carteira do minerador, enviando ao nó `via`."""
-        def spendable():                          # recompensas só amadurecem após `coinbase_maturity` blocos
+        """Pays `amount` to `to_address` from the miner's wallet, sending it to node `via`."""
+        def spendable():                          # rewards only mature after `coinbase_maturity` blocks
             chain = RemoteChain(self.urls[0])
             self.hd.discover(chain)
             return sum(o.value for _, o in self.hd.utxos(chain)) >= amount + 20 * self.fee
-        wait(spendable, 150, f"minerador ter {format_units(amount)} WFLX gastáveis", every=2)
+        wait(spendable, 150, f"miner to have {format_units(amount)} spendable WFLX", every=2)
         chain = RemoteChain(self.urls[0])
         self.hd.discover(chain)
         tx = self.hd.pay(chain, to_address, amount)
         txid = self.submit(via, tx)
-        wait(lambda: self.confirmed(txid), 90, f"tx {txid[:12]} minerada")
+        wait(lambda: self.confirmed(txid), 90, f"tx {txid[:12]} mined")
         return txid
 
-    # ---------- passos ----------
-    @step("1. nós sobem, mesma rede e conectados entre si")
+    # ---------- steps ----------
+    @step("1. nodes start, same network and connected to each other")
     def nodes_up(self):
         ids = set()
         for u in self.urls:
-            st = wait(lambda u=u: self.status(u), 30, f"nó {u} responder")
+            st = wait(lambda u=u: self.status(u), 30, f"node {u} to respond")
             ids.add(st["chain_id"])
-        assert len(ids) == 1, f"redes diferentes: {ids}"
+        assert len(ids) == 1, f"different networks: {ids}"
         for u in self.urls:
             wait(lambda u=u: self.status(u)["peers"] >= 1, 40, f"{u} ter peers")
         return ids.pop()
 
-    @step("2. mineração produz blocos e paga o minerador")
+    @step("2. mining produces blocks and pays the miner")
     def mining(self):
         mature = self.params.coinbase_maturity
         h0 = self.height()
-        wait(lambda: self.height() >= max(h0 + 2, mature + 4), 120, "altura subir")
+        wait(lambda: self.height() >= max(h0 + 2, mature + 4), 120, "height to rise")
         addr = self.hd.address(0)
-        wait(lambda: self.balance(self.urls[0], addr) > 0, 30, "saldo do minerador > 0")
+        wait(lambda: self.balance(self.urls[0], addr) > 0, 30, "miner balance > 0")
         return self.balance(self.urls[0], addr)
 
-    @step("3. transação propaga, é minerada e chega a todos os nós")
+    @step("3. transaction propagates, is mined and reaches all nodes")
     def transfer(self):
         dest = KeyPair.generate().address
         amount = to_units("7.5")
-        via = self.urls[-2] if len(self.urls) > 2 else self.urls[-1]     # um nó que NÃO é o minerador
+        via = self.urls[-2] if len(self.urls) > 2 else self.urls[-1]     # a node that is NOT the miner
         txid = self.fund(dest, amount, via)
         for u in self.urls:
-            wait(lambda u=u: self.balance(u, dest) == amount, 60, f"{u} ver o saldo de {format_units(amount)}")
+            wait(lambda u=u: self.balance(u, dest) == amount, 60, f"{u} to see the balance of {format_units(amount)}")
         return txid
 
-    @step("4. nós convergem (topo e oferta) e um nó tardio sincroniza a cadeia")
+    @step("4. nodes converge (tip and supply) and a late node syncs the chain")
     def sync(self):
-        wait(self.converged, 90, "todos no mesmo topo")
+        wait(self.converged, 90, "all on the same tip")
         if self.net is None:
             return
         late = self.net.add_node("late", seeds=[f"127.0.0.1:{self.net.nodes[0].p2p_port}"])
         self.net.wait_ready(40)
         tip = self.status(self.urls[0])["height"]
-        wait(lambda: self.status(late.api)["height"] >= tip, 90, "nó tardio alcançar a cadeia")
+        wait(lambda: self.status(late.api)["height"] >= tip, 90, "late node to catch up with the chain")
         self.urls.append(late.api)
-        wait(self.converged, 60, "nó tardio no mesmo topo")
+        wait(self.converged, 60, "late node on the same tip")
 
-    @step("5. fluxo offline: cofre + notas offline + note_claim + reconciliação")
+    @step("5. offline flow: vault + offline notes + note_claim + reconciliation")
     def offline(self):
         a, b = self.urls[0], self.urls[-1]
-        # 5.1 dono do cofre recebe fundos
+        # 5.1 the vault owner receives funds
         owner, device, carol = KeyPair.generate(), KeyPair.generate(), KeyPair.generate()
         self.fund(owner.address, to_units("3"), b)
-        wait(lambda: self.balance(a, owner.address) >= to_units("3"), 60, "dono financiado")
-        # 5.2 abre o cofre com chave por vaga (2 vagas de 0,5 WFLX; colateral de 100%)
+        wait(lambda: self.balance(a, owner.address) >= to_units("3"), 60, "owner funded")
+        # 5.2 opens the vault with a key per slot (2 slots of 0.5 WFLX; 100% collateral)
         cap = to_units("0.5")
         slot_signers = [N.SoftwareSigner(KeyPair.generate()) for _ in range(2)]
         info = api(a, f"/api/address/{owner.address}")
@@ -177,9 +177,9 @@ class Smoke:
         tx = build_vault_open(owner, utxos, device, (cap, cap), 100, self.params.vault_ttl_min_blocks,
                               owner.address, self.params, slot_keys=[s.public_hex for s in slot_signers])
         vid = self.submit(b, tx)
-        vault = wait(lambda: api(a, f"/api/vault/{vid}"), 90, "cofre aparecer on-chain")
+        vault = wait(lambda: api(a, f"/api/vault/{vid}"), 90, "vault to appear on-chain")
         assert vault["state"] == "OPEN" and len(vault["slots"]) == 2, vault
-        # 5.3 pagamento OFFLINE encadeado: vaga 0 -> Bob (nota) -> Carol (endereço). Nada disto toca a rede.
+        # 5.3 CHAINED OFFLINE payment: slot 0 -> Bob (note) -> Carol (address). None of this touches the network.
         bob = N.SoftwareSigner(KeyPair.generate())
         chash = chain_id_hash(self.params.chain_id)
         t1 = N.spend_root(chain_hash=chash, vault_id=vid, slot=0, cap=cap, request_id=secrets.token_bytes(16),
@@ -190,43 +190,43 @@ class Smoke:
         pay = N.OfflinePayment({}, 0, (t1, t2), 0)
         journal = Journal()
         journal.record_hop(t1, 0)
-        # 5.4 Carol liquida num nó DIFERENTE do que viu o cofre ser aberto
+        # 5.4 Carol settles on a DIFFERENT node from the one that saw the vault opened
         v = Vault.from_dict(api(b, f"/api/vault/{vid}"))
         claim = build_note_claim(pay, v, self.params)
         assert claim.kind == "note_claim"
         txid = self.submit(self.urls[len(self.urls) // 2], claim)
-        wait(lambda: self.confirmed(txid, b), 90, "note_claim minerado")
+        wait(lambda: self.confirmed(txid, b), 90, "note_claim mined")
         want = cap - self.fee
         for u in self.urls:
             wait(lambda u=u: self.balance(u, carol.address) == want, 60, f"{u} ver {format_units(want)} de Carol")
-        # 5.5 estado do cofre e reconciliação (A4)
+        # 5.5 vault state and reconciliation (A4)
         d = api(a, f"/api/vault/{vid}")
         slot = Vault.from_dict(d).slots[0]
         assert slot.paid == cap and len(slot.settled) == 1 and not d["fraud"], d
         rep = reconcile(Vault.from_dict(d), journal, self.params, d["height"])
         assert rep.slots[0].status == SETTLED and rep.clean, rep
-        # 5.6 reapresentar a mesma cadeia é recusado
+        # 5.6 resubmitting the same chain is rejected
         try:
             build_note_claim(pay, Vault.from_dict(d), self.params)
-            raise AssertionError("reapresentação deveria ser recusada")
+            raise AssertionError("resubmission should have been rejected")
         except WinfluxError:
             pass
-        wait(self.converged, 60, "convergência final")
+        wait(self.converged, 60, "final convergence")
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--nodes", default="", help="URLs de API separadas por vírgula (padrão: sobe uma testnet local)")
-    ap.add_argument("--wallet", default="", help="keystore do minerador (obrigatório com --nodes)")
+    ap.add_argument("--nodes", default="", help="comma-separated API URLs (default: starts a local testnet)")
+    ap.add_argument("--wallet", default="", help="miner keystore (required with --nodes)")
     ap.add_argument("--block-time", type=int, default=2)
-    ap.add_argument("--keep", action="store_true", help="mantém o diretório temporário e os logs")
+    ap.add_argument("--keep", action="store_true", help="keeps the temporary directory and the logs")
     a = ap.parse_args(argv)
     password = os.environ.get("WINFLUX_DEVNET_PASSWORD", DEFAULT_PASSWORD)
     net, tmp = None, None
     try:
         if a.nodes:
             if not a.wallet:
-                ap.error("--wallet é obrigatório com --nodes")
+                ap.error("--wallet is required with --nodes")
             urls, wallet = [u.strip() for u in a.nodes.split(",") if u.strip()], a.wallet
         else:
             tmp = tempfile.mkdtemp(prefix="winflux-smoke-")
@@ -241,9 +241,9 @@ def main(argv=None):
         s.transfer()
         s.sync()
         s.offline()
-    except Exception as e:                                   # falha de infraestrutura (não de um passo)
-        print(f"[FALHOU] infraestrutura: {e}", file=sys.stderr)
-        RESULTS.append(("infraestrutura", False, str(e)))
+    except Exception as e:                                   # infrastructure failure (not a step failure)
+        print(f"[FAILED] infrastructure: {e}", file=sys.stderr)
+        RESULTS.append(("infrastructure", False, str(e)))
     finally:
         if net:
             net.stop()
@@ -252,7 +252,7 @@ def main(argv=None):
         elif tmp:
             print(f"(logs mantidos em {tmp}/logs)")
     failed = [r for r in RESULTS if not r[1]]
-    print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} passos OK" + ("" if not failed else "  — FALHAS: "
+    print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} steps OK" + ("" if not failed else "  — FAILURES: "
           + "; ".join(f"{t}" for t, _, _ in failed)))
     return 1 if failed or not RESULTS else 0
 

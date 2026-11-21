@@ -1,10 +1,10 @@
-"""A4 — Reconciliação: o dono do cofre compara o que EMITIU offline com o que a cadeia mostra.
+"""A4 — Reconciliation: the vault owner compares what they ISSUED offline with what the chain shows.
 
-Não há transação nova de consenso: fechar uma vaga antes do fim da janela de claims prejudicaria quem já recebeu notas
-offline (o dono poderia "desfazer" pagamentos). O único caminho de saída é o `vault_refund` depois de
-`expires_height + claim_window_blocks`. Esta camada diz, com a MESMA conta do consenso (`plan_refund`), o que cada vaga
-é, o que será devolvido, quem pode ter perdido dinheiro e o que parece errado (gasto que o dono não reconhece, gasto
-duplo, colateral consumido). Camada pura: sem I/O de rede; o diário é um arquivo JSON simples.
+There is no new consensus transaction: closing a slot before the end of the claims window would harm whoever already received offline
+notes (the owner could "undo" payments). The only way out is `vault_refund` after
+`expires_height + claim_window_blocks`. This layer says, with the SAME arithmetic as consensus (`plan_refund`), what each slot
+is, what will be refunded, who may have lost money and what looks wrong (a spend the owner does not recognize, double
+spend, collateral consumed). Pure layer: no network I/O; the journal is a simple JSON file.
 """
 import json
 import os
@@ -18,15 +18,15 @@ from ..units import format_units
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
-# estados primários de uma vaga
+# primary states of a slot
 UNUSED, OUTSTANDING, PARTIAL, SETTLED, LAPSED = "UNUSED", "OUTSTANDING", "PARTIAL", "SETTLED", "LAPSED"
-# sinalizadores (podem coexistir com qualquer estado)
+# flags (can coexist with any state)
 DIVERGENT, CONFLICT, DOUBLE_ISSUED = "DIVERGENT", "CONFLICT", "DOUBLE_ISSUED"
 
 
-# ---------------------------------------------------------------- diário de emissões do dono
+# ---------------------------------------------------------------- owner's issuance journal
 class Journal:
-    """Registro, no aparelho do dono, das notas-raiz que ele assinou (uma por vaga, se agir direito)."""
+    """Record, on the owner's device, of the root notes they signed (one per slot, if they behave)."""
 
     def __init__(self, entries=()):
         self._e: dict[tuple, None] = {}
@@ -36,18 +36,18 @@ class Journal:
     def add(self, vault_id: str, slot: int, root_txid: str) -> bool:
         if not (isinstance(vault_id, str) and _HEX64.match(vault_id) and isinstance(root_txid, str)
                 and _HEX64.match(root_txid)):
-            raise ValidationError("entrada de diário inválida")
+            raise ValidationError("invalid journal entry")
         if not (isinstance(slot, int) and not isinstance(slot, bool) and 0 <= slot < 65536):
-            raise ValidationError("vaga inválida")
+            raise ValidationError("invalid slot")
         new = (vault_id, slot, root_txid) not in self._e
         self._e[(vault_id, slot, root_txid)] = None
         return new
 
     def record_hop(self, hop, slot: int) -> bool:
-        """Registra o 1º salto (raiz) que o dono acabou de assinar. Recusa saltos que não gastam a raiz da vaga."""
+        """Records the 1st hop (root) the owner has just signed. Refuses hops that do not spend the slot's root."""
         tx = hop.tx
         if tx.input_note != root_note_id(tx.vault_id, slot):
-            raise ValidationError("este salto não gasta a nota raiz da vaga informada")
+            raise ValidationError("this hop does not spend the root note of the given slot")
         return self.add(tx.vault_id, slot, tx.txid.hex())
 
     def roots(self, vault_id: str, slot: int) -> set:
@@ -62,11 +62,11 @@ class Journal:
     @classmethod
     def from_dict(cls, d) -> "Journal":
         if not isinstance(d, dict) or set(d) != {"v", "entries"} or d["v"] != 1 or not isinstance(d["entries"], list):
-            raise ValidationError("diário inválido")
+            raise ValidationError("invalid journal")
         j = cls()
         for e in d["entries"]:
             if not isinstance(e, dict) or set(e) != {"vault_id", "slot", "root_txid"}:
-                raise ValidationError("diário inválido")
+                raise ValidationError("invalid journal")
             j.add(e["vault_id"], e["slot"], e["root_txid"])
         return j
 
@@ -85,10 +85,10 @@ class Journal:
             with open(path) as f:
                 return cls.from_dict(json.load(f))
         except json.JSONDecodeError:
-            raise ValidationError("diário corrompido") from None
+            raise ValidationError("corrupted journal") from None
 
 
-# ---------------------------------------------------------------- relatório
+# ---------------------------------------------------------------- report
 @dataclass
 class SlotReport:
     slot: int
@@ -98,8 +98,8 @@ class SlotReport:
     paid: int
     compensated: int
     collateral_left: int
-    issued: bool                 # o diário tem a nota-raiz desta vaga
-    unsettled_issued: int        # valor emitido offline e ainda não liquidado on-chain (em risco p/ quem recebeu)
+    issued: bool                 # the journal has this slot's root note
+    unsettled_issued: int        # value issued offline and not yet settled on-chain (at risk for the recipient)
 
 
 @dataclass
@@ -113,7 +113,7 @@ class Report:
     can_refund_now: bool
     blocks_until_refund: int
     slots: list
-    refund_total: int            # o que `plan_refund` devolveria hoje (0 se já encerrado)
+    refund_total: int            # what `plan_refund` would return today (0 if already closed)
     refund_fee: int
     refund_net: int
     burned: int
@@ -125,9 +125,9 @@ class Report:
 
 
 def reconcile(vault: "V.Vault", journal: Journal, params, height: int) -> Report:
-    """Compara o diário do dono com o estado do cofre na altura `height` (altura atual da cadeia)."""
+    """Compares the owner's journal with the vault state at height `height` (current chain height)."""
     deadline = V.claim_deadline(vault, params)
-    claims_open = height + 1 <= deadline            # um bloco incluído agora ainda aceitaria claims
+    claims_open = height + 1 <= deadline            # a block included now would still accept claims
     closed = vault.state != "OPEN"
     reports, warn = [], []
     for i, s in enumerate(vault.slots):
@@ -152,48 +152,48 @@ def reconcile(vault: "V.Vault", journal: Journal, params, height: int) -> Report
     if closed:
         total = fee = net = burn = 0
     else:
-        plan = V.plan_refund(vault, params, None)    # a MESMA conta do consenso
+        plan = V.plan_refund(vault, params, None)    # the SAME arithmetic as consensus
         total, fee, net, burn = plan.total, plan.fee, plan.payout, plan.burn
     can_refund = (not closed) and not claims_open
     sym = "WFLX"
     if closed:
-        warn.append("Cofre já encerrado: o reembolso foi feito.")
+        warn.append("Vault already closed: the refund has been made.")
     open_with_issue = [r.slot for r in reports if r.issued and r.status in (OUTSTANDING, PARTIAL)]
     if open_with_issue:
-        warn.append(f"Vagas {open_with_issue} têm pagamentos emitidos que quem recebeu ainda pode liquidar até o bloco "
-                    f"{deadline}. O reembolso só é possível depois disso.")
+        warn.append(f"Slots {open_with_issue} have issued payments that recipients can still settle until block "
+                    f"{deadline}. The refund is only possible after that.")
     lost = [(r.slot, r.unsettled_issued) for r in reports if r.status == LAPSED and r.unsettled_issued > 0]
     if lost and not closed:
-        warn.append("Pagamentos emitidos nas vagas " + ", ".join(f"{a} ({format_units(b)} {sym})" for a, b in lost)
-                    + " não foram liquidados a tempo: quem os recebeu perdeu o direito; o valor volta a você no reembolso.")
+        warn.append("Payments issued in slots " + ", ".join(f"{a} ({format_units(b)} {sym})" for a, b in lost)
+                    + " were not settled in time: whoever received them lost the right; the value comes back to you on the refund.")
     bad = [r.slot for r in reports if DIVERGENT in r.flags]
     if bad:
-        warn.append(f"Vagas {bad}: a cadeia mostra um gasto que seu diário NÃO registra. A chave da vaga pode ter sido "
-                    "exposta/clonada, ou o diário está incompleto. Trate como possível comprometimento.")
+        warn.append(f"Slots {bad}: the chain shows a spend that your journal does NOT record. The slot key may have been "
+                    "exposed/cloned, or the journal is incomplete. Treat it as a possible compromise.")
     dbl = [r.slot for r in reports if DOUBLE_ISSUED in r.flags]
     if dbl:
-        warn.append(f"Vagas {dbl}: seu diário tem mais de uma nota-raiz (você emitiu a mesma vaga duas vezes).")
+        warn.append(f"Slots {dbl}: your journal has more than one root note (you issued the same slot twice).")
     conf = [r.slot for r in reports if CONFLICT in r.flags]
     if conf:
         used = sum(r.compensated for r in reports)
-        warn.append(f"Gasto duplo detectado nas vagas {conf}: {format_units(used)} {sym} do colateral já indenizaram "
-                    "recebedores; o cofre está marcado como fraudulento"
-                    + (f" e o colateral restante ({format_units(burn)} {sym}) será QUEIMADO no reembolso." if burn and not closed else "."))
+        warn.append(f"Double spend detected in slots {conf}: {format_units(used)} {sym} of the collateral already compensated "
+                    "recipients; the vault is marked as fraudulent"
+                    + (f" and the remaining collateral ({format_units(burn)} {sym}) will be BURNED on refund." if burn and not closed else "."))
     return Report(vault.vault_id, height, vault.state, vault.fraud, deadline, claims_open, can_refund,
                   max(0, deadline - height), reports, total, fee, net, burn, warn)
 
 
 def render(r: Report, symbol: str = "WFLX") -> str:
     f = lambda v: f"{format_units(v)} {symbol}"
-    L = [f"Cofre {r.vault_id[:16]}…  estado={r.state}{'  FRAUDE' if r.fraud else ''}  altura={r.height}",
-         f"Prazo de claims: bloco {r.claim_deadline} "
-         + ("(ainda aberto; reembolso em ~%d blocos)" % r.blocks_until_refund if r.claims_open else "(encerrado)")]
+    L = [f"Vault {r.vault_id[:16]}…  state={r.state}{'  FRAUD' if r.fraud else ''}  height={r.height}",
+         f"Claim deadline: block {r.claim_deadline} "
+         + ("(still open; refund in ~%d blocks)" % r.blocks_until_refund if r.claims_open else "(closed)")]
     for s in r.slots:
-        L.append(f"  vaga {s.slot}: {s.status:<11} pago {f(s.paid)} de {f(s.cap)}"
-                 + (f" | indenizado {f(s.compensated)}" if s.compensated else "")
+        L.append(f"  slot {s.slot}: {s.status:<11} paid {f(s.paid)} of {f(s.cap)}"
+                 + (f" | compensated {f(s.compensated)}" if s.compensated else "")
                  + (f" | flags: {','.join(s.flags)}" if s.flags else ""))
     if r.state == "OPEN":
-        L.append(f"Reembolso {'disponível agora' if r.can_refund_now else 'ainda indisponível'}: "
-                 f"{f(r.refund_net)} líquidos (taxa {f(r.refund_fee)}" + (f", queimado {f(r.burned)}" if r.burned else "") + ")")
-    L += ["ATENÇÃO: " + w for w in r.warnings]
+        L.append(f"Refund {'available now' if r.can_refund_now else 'not yet available'}: "
+                 f"{f(r.refund_net)} net (fee {f(r.refund_fee)}" + (f", burned {f(r.burned)}" if r.burned else "") + ")")
+    L += ["WARNING: " + w for w in r.warnings]
     return "\n".join(L)

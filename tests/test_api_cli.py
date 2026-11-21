@@ -1,4 +1,4 @@
-"""API HTTP e carteira de linha de comando contra um nó real; gênese justo."""
+"""HTTP API and command-line wallet against a real node; fair genesis."""
 import asyncio
 import json
 import urllib.request
@@ -32,7 +32,7 @@ def test_fair_launch_genesis_has_no_premine_no_authority(tmp_path):
     cfg = load_genesis_config(out)
     assert cfg.allocations == () and cfg.total == 0
     assert cfg.params.authorities == () and cfg.params.consensus == "pow"
-    # emissão total nunca ultrapassa o teto
+    # total issuance never exceeds the cap
     p, total, r, h = cfg.params, 0, cfg.params.block_reward, cfg.params.halving_interval
     while r > 0:
         total += r * h
@@ -51,22 +51,22 @@ def test_api_and_cli_end_to_end(tmp_path, monkeypatch, capsys):
         loop = asyncio.get_running_loop()
         call = lambda *a: loop.run_in_executor(None, lambda: cli_main(["--node", url, "--wallet", w, *a]))
         w = str(tmp_path / "w.json")
-        monkeypatch.setenv("WINFLUX_WALLET_PASSWORD", "senha-forte-123")
+        monkeypatch.setenv("WINFLUX_WALLET_PASSWORD", "strong-password-123")
         try:
             assert await call("create") == 0
-            addr = capsys.readouterr().out.split("endereço: ")[1].split()[0]
+            addr = capsys.readouterr().out.split("address: ")[1].split()[0]
             for _ in range(4):
                 await node.mine_one(addr)
             code, st = await loop.run_in_executor(None, http, api.port, "/api/status")
             assert code == 200 and st["height"] == 4 and st["supply"] == 4 * cfg.params.block_reward
             assert await call("balance") == 0
-            # só 2 recompensas amadureceram (maturidade 2): 4 blocos => saldo total visível, gastável parcial
+            # only 2 rewards matured (maturity 2): 4 blocks => full balance visible, partially spendable
             assert "WFLX" in capsys.readouterr().out
             dest = kp(3).address
             amount = str(cfg.params.block_reward // 10**8 // 2)
             capsys.readouterr()
             assert await call("send", dest, amount) == 0
-            txid = capsys.readouterr().out.split("enviada: ")[1].strip()
+            txid = capsys.readouterr().out.split("sent: ")[1].strip()
             assert await wait_for(lambda: txid in node.mempool)
             code, r = await loop.run_in_executor(None, http, api.port, f"/api/tx/{txid}")
             assert code == 200 and r["confirmations"] == 0
@@ -75,8 +75,8 @@ def test_api_and_cli_end_to_end(tmp_path, monkeypatch, capsys):
             assert r["confirmations"] == 1
             code, a = await loop.run_in_executor(None, http, api.port, f"/api/address/{dest}")
             assert a["balance"] == int(amount) * 10**8
-            # entradas inválidas na API
-            assert (await loop.run_in_executor(None, http, api.port, "/api/address/lixo"))[0] == 400
+            # invalid inputs on the API
+            assert (await loop.run_in_executor(None, http, api.port, "/api/address/garbage"))[0] == 400
             assert (await loop.run_in_executor(None, http, api.port, "/api/tx", {"x": 1}))[0] == 400
             assert (await loop.run_in_executor(None, http, api.port, "/api/block/999"))[0] == 404
         finally:

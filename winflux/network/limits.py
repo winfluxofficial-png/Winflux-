@@ -1,9 +1,9 @@
-"""Limitadores de taxa (token bucket) compartilhados por P2P e API. Puros: o relógio é injetável nos testes."""
+"""Rate limiters (token bucket) shared by P2P and API. Pure: the clock is injectable in tests."""
 import time
 
 
 class TokenBucket:
-    """`rate` tokens/s, até `burst` acumulados. `allow()` consome e diz se havia crédito."""
+    """`rate` tokens/s, up to `burst` accumulated. `allow()` consumes and says whether there was credit."""
 
     __slots__ = ("rate", "burst", "tokens", "stamp", "_clock")
 
@@ -24,13 +24,13 @@ class TokenBucket:
         return True
 
     def wait_time(self, cost: float = 1.0) -> float:
-        """Segundos até haver crédito para `cost` (0 se já há)."""
+        """Seconds until there is credit for `cost` (0 if there already is)."""
         self._refill()
         return 0.0 if self.tokens >= cost else (cost - self.tokens) / self.rate
 
 
 class KeyedLimiter:
-    """Um balde por chave (ex.: IP). Memória limitada: acima de `max_keys`, descarta os mais ociosos."""
+    """One bucket per key (e.g. IP). Bounded memory: above `max_keys`, drops the idlest ones."""
 
     def __init__(self, rate: float, burst: float, max_keys: int = 10_000, clock=time.monotonic):
         self.rate, self.burst, self.max_keys, self._clock = rate, burst, max_keys, clock

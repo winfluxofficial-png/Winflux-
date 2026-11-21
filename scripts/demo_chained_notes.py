@@ -1,9 +1,9 @@
-"""Demo (A2): pagamento offline ENCADEADO com hardware simulado.
+"""Demo (A2): CHAINED offline payment with simulated hardware.
 
     PYTHONPATH=. python scripts/demo_chained_notes.py
 
-Alice -> Bob -> Carlos -> Dave sem rede, cada receptor verificando localmente. O hardware é SIMULADO (ver
-docs/security-assumptions.md): isto demonstra o protocolo, não segurança de hardware real.
+Alice -> Bob -> Carlos -> Dave with no network, each receiver verifying locally. The hardware is SIMULATED (see
+docs/security-assumptions.md): this demonstrates the protocol, not real hardware security.
 """
 from winflux.blockchain.chain import Chain
 from winflux.blockchain.genesis import GenesisConfig
@@ -47,12 +47,12 @@ def verifier():
 
 def receive(who, pay, key, i):
     vp = verifier().verify(pay, now=NOW, my_key=(key.key_type, key.public_key), request_id=req(i))
-    print(f"   {who}: {vp.status} | profundidade {vp.depth} | nível {vp.level} | valor {fu(vp.value)} WFLX "
-          f"| prazo p/ liquidar: {vp.deadline_blocks} blocos")
+    print(f"   {who}: {vp.status} | depth {vp.depth} | level {vp.level} | value {fu(vp.value)} WFLX "
+          f"| settlement deadline: {vp.deadline_blocks} blocks")
     return vp
 
 
-print("== Alice (online) abre um cofre com 2 vagas de 30 WFLX; a chave de cada vaga está no hardware (uso único)")
+print("== Alice (online) opens a vault with 2 slots of 30 WFLX; each slot's key is in the hardware (single use)")
 slot_key, slot_key2 = (hw["alice"].generate_key("p256", bytes(16)) for _ in range(2))
 tx = build_vault_open(alice, chain.utxo.utxos_for(alice.address), P256KeyPair(), (to_units("30"),) * 2, 100, 10,
                       alice.address, params, slot_keys=[slot_key.public_hex, slot_key2.public_hex])
@@ -60,7 +60,7 @@ mine(tx)
 vid = tx.txid
 chash = chain_id_hash(params.chain_id)
 proof = P.build_vault_proof(chain, vid, 0)
-print(f"   cofre {vid[:12]}…, prova de {len(str(proof))} caracteres, checkpoint altura {chain.height}")
+print(f"   vault {vid[:12]}…, proof of {len(str(proof))} characters, checkpoint height {chain.height}")
 
 print("\n== OFFLINE 1: Alice -> Bob (30 WFLX)")
 bob = hw["bob"].generate_key("p256", req(1))
@@ -69,7 +69,7 @@ t1 = N.spend_root(chain_hash=chash, vault_id=vid, slot=0, cap=to_units("30"), ou
 pay1 = N.OfflinePayment(proof, 0, (t1,), 0)
 receive("Bob   ", pay1, bob, 1)
 
-print("\n== OFFLINE 2: Bob -> Carlos (10), troco 20 para ele mesmo")
+print("\n== OFFLINE 2: Bob -> Carlos (10), 20 change back to himself")
 carlos, change = hw["carlos"].generate_key("p256", req(2)), hw["bob"].generate_key("p256", req(2))
 t2 = N.spend_output(t1, 0, outputs=[out(10, carlos), out(20, change)], request_id=req(2), signer=bob)
 pay2 = N.OfflinePayment(proof, 0, (t1, t2), 0)
@@ -81,31 +81,31 @@ t3 = N.spend_output(t2, 0, outputs=[out(10, dave)], request_id=req(3), signer=ca
 pay3 = N.OfflinePayment(proof, 0, (t1, t2, t3), 0)
 receive("Dave  ", pay3, dave, 3)
 
-print("\n== OFFLINE 4: Dave -> Erin: 4º salto, acima do limite de 3 para nível hardware")
+print("\n== OFFLINE 4: Dave -> Erin: 4th hop, above the limit of 3 for hardware level")
 erin = hw["erin"].generate_key("p256", req(4))
 t4 = N.spend_output(t3, 0, outputs=[out(10, erin)], request_id=req(4), signer=dave)
 try:
     receive("Erin  ", N.OfflinePayment(proof, 0, (t1, t2, t3, t4), 0), erin, 4)
 except ValidationError as e:
-    print("   Erin  : RECUSADO ->", e)
+    print("   Erin  : REJECTED ->", e)
 
-print("\n== TENTATIVA DE GASTO DUPLO: Bob tenta gastar de novo a mesma nota (já usada)")
+print("\n== DOUBLE-SPEND ATTEMPT: Bob tries to spend the same note again (already used)")
 try:
     N.spend_output(t1, 0, outputs=[out(30, hw["erin"].generate_key("p256", req(5)))], request_id=req(5), signer=bob)
 except HardwareError as e:
-    print("   hardware recusa ->", e)
+    print("   hardware refuses ->", e)
 
-print("\n== RISCO RESIDUAL (vaga 1): Bob2 tem hardware COMPROMETIDO desde o início e assina duas vezes a mesma nota")
+print("\n== RESIDUAL RISK (slot 1): Bob2 has COMPROMISED hardware from the start and signs the same note twice")
 bad_hw = root.provision("strongbox", not_before=1_700_000_000, not_after=2**40)
-bad_hw.break_single_use()                       # adversário adultera o próprio hardware ANTES de usar a chave
+bad_hw.break_single_use()                       # adversary tampers with their own hardware BEFORE using the key
 bob2 = bad_hw.generate_key("p256", req(7))
 proof1 = P.build_vault_proof(chain, vid, 1)
 s1 = N.spend_root(chain_hash=chash, vault_id=vid, slot=1, cap=to_units("30"), outputs=[out(30, bob2)],
                   request_id=req(7), signer=slot_key2)
 carlos2, eve = hw["carlos"].generate_key("p256", req(8)), hw["erin"].generate_key("p256", req(9))
 to_carlos = N.spend_output(s1, 0, outputs=[out(30, carlos2)], request_id=req(8), signer=bob2)
-to_eve = N.spend_output(s1, 0, outputs=[out(30, eve)], request_id=req(9), signer=bob2)     # MESMA nota, outro destino
+to_eve = N.spend_output(s1, 0, outputs=[out(30, eve)], request_id=req(9), signer=bob2)     # SAME note, different destination
 receive("Carlos", N.OfflinePayment(proof1, 1, (s1, to_carlos), 0), carlos2, 8)
 receive("Eve   ", N.OfflinePayment(proof1, 1, (s1, to_eve), 0), eve, 9)
-print("   => Carlos e Eve aceitaram offline a MESMA nota; o conflito só aparece na liquidação (A3), onde o colateral")
-print("      da vaga raiz compensa sob R1-R9. O verificador NÃO impede isso e não promete impedir.")
+print("   => Carlos and Eve accepted the SAME note offline; the conflict only shows up at settlement (A3), where the collateral")
+print("      of the root slot compensates under R1-R9. The verifier does NOT prevent this and does not promise to.")

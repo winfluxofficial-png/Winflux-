@@ -1,8 +1,6 @@
 # Winflux (WFLX) — a blockchain of its own
 
 > Official name: **Winflux (WFLX)**.
-> Trademark and symbol availability is **not yet confirmed**: see `docs/naming.md`.
-> **Test software. Do not use with real money** before a cryptographic audit,
 > adversarial testing and independent review.
 
 | Parameter | Value |

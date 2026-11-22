@@ -1,50 +1,55 @@
-#!/usr/bin/env bash
-# Winflux audit helper — non-destructive, best-effort checks.
-set -uo pipefail
 
-ROOT="$(pwd)"
-IS_GIT=0
-if git rev-parse --show-toplevel >/dev/null 2>&1; then
-  ROOT="$(git rev-parse --show-toplevel)"
-  IS_GIT=1
-fi
+#!/usr/bin/env bash
+# Winflux — run ALL the tests at once and print a summary.
+#
+#   ./audit_winflux.sh              # full run
+#   ./audit_winflux.sh --quick      # compile + pytest only
+#   ./audit_winflux.sh --no-smoke   # skip the smoke test
+#   ./audit_winflux.sh --no-demos   # skip the demo scripts
+#   ./audit_winflux.sh --out DIR    # output directory
+#
+# Each step writes its own log under the output directory plus a summary.txt.
+# Exit code: 0 if every step passed (skips do not count as failures), 1 if any step failed.
+
+set -u
+
+QUICK=0
+SMOKE=1
+DEMOS=1
+STAMP="$(date +%Y%m%d_%H%M%S)"
+OUT="${TEST_OUT:-test-report-$STAMP}"
+
+while (($#)); do
+  case "$1" in
+    --quick) QUICK=1; SMOKE=0; DEMOS=0 ;;
+    --no-smoke) SMOKE=0 ;;
+    --no-demos) DEMOS=0 ;;
+    --out)
+      shift
+      OUT="${1:?--out needs a directory}"
+      ;;
+    -h|--help)
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1 (try --help)" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+# Root is the directory containing this script.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
 
-STAMP="$(date +%Y%m%d_%H%M%S)"
-OUT="${AUDIT_OUT:-audit-report-$STAMP}"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
 mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
 SUMMARY="$OUT/summary.txt"
 : > "$SUMMARY"
-
-run_check() {
-  local label="$1"
-  shift
-  local logfile="$OUT/${label//[^a-zA-Z0-9_-]/_}.log"
-  printf '\n===== %s =====\n' "$label" | tee -a "$SUMMARY"
-  "$@" >"$logfile" 2>&1
-  local rc=$?
-  if (( rc == 0 )); then
-    printf 'PASS: %s\n' "$label" | tee -a "$SUMMARY"
-  else
-    printf 'FAIL/NOTICE (exit %s): %s — see %s\n' "$rc" "$label" "$logfile" | tee -a "$SUMMARY"
-  fi
-  return 0   # never abort the whole audit
-}
-
-echo "Winflux audit report: $OUT" | tee -a "$SUMMARY"
-echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$SUMMARY"
-echo "Root: $ROOT" | tee -a "$SUMMARY"
-
-if (( IS_GIT )); then
-  run_check git_status git status --short --branch
-  run_check git_diff git diff --check
-  run_check git_recent git log -n 30 --oneline --decorate
-  run_check git_remotes git remote -v
-  git ls-files >"$OUT/tracked_files.txt" 2>&1 || true
-else
-  echo "NOTICE: no Git repository detected at $ROOT; Git checks skipped." | tee -a "$SUMMARY"
-  echo "No Git repository detected." >"$OUT/tracked_files.txt"
-fi
 
 PY=""
 if command -v python >/dev/null 2>&1; then
@@ -53,102 +58,113 @@ elif command -v python3 >/dev/null 2>&1; then
   PY="python3"
 fi
 
-if [[ -n "$PY" ]]; then
-  run_check python_version "$PY" --version
+if [[ -z "$PY" ]]; then
+  echo "ERROR: neither python nor python3 is available" >&2
+  exit 1
+fi
 
-  compile_targets=()
-  [[ -d winflux ]] && compile_targets+=(winflux)
-  [[ -d tests ]] && compile_targets+=(tests)
-  if ((${#compile_targets[@]} > 0)); then
-    run_check python_compile "$PY" -m compileall -q "${compile_targets[@]}"
+PASSED=0
+FAILED=0
+SKIPPED=0
+FAILED_LABELS=()
+
+run_check() {
+  local label="$1"
+  shift
+  local logfile="$OUT/${label//[^a-zA-Z0-9_-]/_}.log"
+  local t0=$SECONDS
+
+  printf '\n===== %s =====\n' "$label" | tee -a "$SUMMARY"
+
+  if "$@" >"$logfile" 2>&1; then
+    printf 'PASS (%ss): %s\n' "$((SECONDS - t0))" "$label" | tee -a "$SUMMARY"
+    PASSED=$((PASSED + 1))
   else
-    echo "SKIP: winflux/ and tests/ directories not found" | tee -a "$SUMMARY"
+    local rc=$?
+    printf 'FAIL (exit %s, %ss): %s — see %s\n' \
+      "$rc" "$((SECONDS - t0))" "$label" "$logfile" | tee -a "$SUMMARY"
+    tail -n 15 "$logfile" | sed 's/^/    | /' | tee -a "$SUMMARY"
+    FAILED=$((FAILED + 1))
+    FAILED_LABELS+=("$label")
   fi
+}
 
-  run_check pip_check "$PY" -m pip check
+skip() {
+  printf 'SKIP: %s\n' "$1" | tee -a "$SUMMARY"
+  SKIPPED=$((SKIPPED + 1))
+}
 
-  if "$PY" -m pip show pytest >/dev/null 2>&1; then
-    run_check pytest "$PY" -m pytest -ra
-  else
-    echo "SKIP: pytest not installed in selected Python environment" | tee -a "$SUMMARY"
-  fi
+echo "Winflux test run: $OUT" | tee -a "$SUMMARY"
+echo "Date: $(date -Is)" | tee -a "$SUMMARY"
+echo "Root: $ROOT" | tee -a "$SUMMARY"
+echo "Python: $($PY --version 2>&1)" | tee -a "$SUMMARY"
 
-  if "$PY" -m pip show pip_audit >/dev/null 2>&1; then
-    run_check pip_audit "$PY" -m pip_audit
-  elif command -v pip-audit >/dev/null 2>&1; then
-    run_check pip_audit pip-audit
-  else
-    echo "SKIP: pip-audit unavailable" | tee -a "$SUMMARY"
-  fi
-else
-  echo "SKIP: neither python nor python3 available" | tee -a "$SUMMARY"
+VERSION="$($PY -c 'import winflux; print(getattr(winflux, "__version__", "unknown"))' 2>/dev/null || echo unknown)"
+echo "Winflux version: $VERSION" | tee -a "$SUMMARY"
+
+# 0. prerequisites
+if ! "$PY" -c 'import pytest, cryptography' >/dev/null 2>&1; then
+  echo "ERROR: pytest and cryptography are required (pip install -r requirements.txt)" | tee -a "$SUMMARY" >&2
+  exit 1
 fi
 
-if command -v bandit >/dev/null 2>&1; then
-  run_check bandit bandit -r winflux -ll
-else
-  echo "SKIP: bandit unavailable" | tee -a "$SUMMARY"
+# 1. static checks
+run_check compile "$PY" -m compileall -q winflux tests scripts
+run_check imports "$PY" -c 'import winflux.node.main, winflux.cli, winflux.tools.netgen, winflux.tools.localnet'
+
+# 2. unit, integration and adversarial tests
+run_check pytest "$PY" -m pytest -q -ra
+
+PYTEST_LINE="$(tail -n 3 "$OUT/pytest.log" | grep -E 'passed|failed|error' | tail -n 1 || true)"
+if [[ -n "$PYTEST_LINE" ]]; then
+  echo "    pytest: $PYTEST_LINE" | tee -a "$SUMMARY"
 fi
 
-if command -v semgrep >/dev/null 2>&1; then
-  run_check semgrep semgrep scan --config auto winflux
+# 3. demo scripts
+if ((DEMOS)); then
+  for demo in demo_local demo_offline_vault demo_chained_notes demo_note_claim; do
+    run_check "$demo" "$PY" "scripts/$demo.py"
+  done
 else
-  echo "SKIP: semgrep unavailable" | tee -a "$SUMMARY"
+  skip "demo scripts (--quick/--no-demos)"
 fi
 
-if command -v gitleaks >/dev/null 2>&1; then
-  run_check gitleaks gitleaks detect --source . --no-git --redact
-else
-  echo "SKIP: gitleaks unavailable" | tee -a "$SUMMARY"
-fi
+# 4. smoke test on real processes
+if ((SMOKE)); then
+  run_check smoke_test "$PY" scripts/smoke_test.py
+  sleep 1
 
-if command -v trivy >/dev/null 2>&1; then
-  run_check trivy_fs trivy fs --scanners vuln,misconfig,secret --skip-dirs .venv --skip-dirs venv .
-else
-  echo "SKIP: trivy unavailable" | tee -a "$SUMMARY"
-fi
-
-if command -v ruff >/dev/null 2>&1; then
-  run_check ruff ruff check winflux tests
-else
-  echo "SKIP: ruff unavailable" | tee -a "$SUMMARY"
-fi
-
-if command -v mypy >/dev/null 2>&1; then
-  run_check mypy mypy winflux
-else
-  echo "SKIP: mypy unavailable" | tee -a "$SUMMARY"
-fi
-
-if command -v shellcheck >/dev/null 2>&1; then
-  mapfile -t shfiles < <(find scripts -type f -name '*.sh' -print 2>/dev/null || true)
-  if ((${#shfiles[@]} > 0)); then
-    run_check shellcheck shellcheck "${shfiles[@]}"
-  else
-    echo "SKIP: no scripts/*.sh files" | tee -a "$SUMMARY"
+  LEFT="$(pgrep -fa 'python.* -m winflux\.node\.main' 2>/dev/null || true)"
+  if [[ -n "$LEFT" ]]; then
+    printf 'WARNING: node process(es) still running after the smoke test:\n%s\n' "$LEFT" | tee -a "$SUMMARY"
   fi
 else
-  echo "SKIP: shellcheck unavailable" | tee -a "$SUMMARY"
+  skip "smoke test (--quick/--no-smoke)"
 fi
 
-# Pattern search (best-effort, never fails the audit)
-grep -RInE \
-  --exclude-dir=.git \
-  --exclude-dir=.venv \
-  --exclude-dir=venv \
-  --exclude-dir=__pycache__ \
-  --exclude='*.log' \
-  '(TODO|FIXME|XXX|eval\(|exec\(|pickle\.loads|shell=True|password\s*=|secret\s*=|private_key)' \
-  winflux scripts tests \
-  >"$OUT/pattern_review.txt" 2>&1 || true
-echo "Pattern search saved: $OUT/pattern_review.txt" | tee -a "$SUMMARY"
+# 5. Android wallet core tests
+if ((QUICK)); then
+  skip "android-wallet tests (--quick)"
+elif [[ -x android-wallet/gradlew && ( -n "${ANDROID_HOME:-}" || -n "${ANDROID_SDK_ROOT:-}" ) ]]; then
+  run_check android_unit_tests bash -c 'cd android-wallet && ./gradlew --no-daemon :app:testDebugUnitTest'
+else
+  skip "android-wallet tests (need android-wallet/gradlew and ANDROID_HOME; see android-wallet/README.md)"
+fi
 
-find . -maxdepth 3 -type f \
-  \( -name 'requirements*.txt' -o -name 'pyproject.toml' -o -name 'setup.cfg' -o -name 'Pipfile*' \) \
-  -not -path './.git/*' -not -path './.venv/*' \
-  >"$OUT/dependency_files.txt" 2>/dev/null || true
+# Summary
+{
+  echo
+  echo "================ SUMMARY ================"
+  echo "passed: $PASSED   failed: $FAILED   skipped: $SKIPPED"
+  if ((FAILED)); then
+    echo "FAILED steps: ${FAILED_LABELS[*]}"
+  fi
+  echo "logs: $OUT"
+} | tee -a "$SUMMARY"
 
-echo
-echo "Audit run finished. Summary: $SUMMARY"
-echo "Logs: $OUT"
-echo "Note: automated checks are not an independent security audit."
+if ((FAILED)); then
+  exit 1
+fi
+
+echo "ALL TESTS PASSED" | tee -a "$SUMMARY"
+
